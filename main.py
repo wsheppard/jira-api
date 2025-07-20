@@ -59,32 +59,61 @@ async def serve_ui():
     return FileResponse("static/index.html")
 
 
+import base64
+
 @app.get("/in-progress")
 async def get_in_progress_issues():
     """
     Retrieve Jira issues with status 'In Progress' assigned to the configured users
     from each instance, returning a flat list of issue metadata.
     """
-    headers = {"Accept": "application/json"}
+    headers = {"Content-Type": "application/json"}
     flattened = []
     async with httpx.AsyncClient() as client:
         for cfg in configs:
+
+            print("The Jira Token: {}".format(cfg["token"]))
+
+            auth=cfg["email"] + ":" + cfg["token"]
+
+            print(f"AUTH WITH EXTENTS: [{auth}]")
+
+            auth64b = base64.b64encode(auth.encode())
+            auth64 = auth64b.decode()
+
+            print(auth64)
+
+            headers["Authorization"] = f"Basic {auth64}"
+
+            print(headers)
+
             if len(cfg["assignees"]) == 1:
                 assignee_clause = f'assignee = "{cfg["assignees"][0]}"'
             else:
                 users = ", ".join(f'"{u}"' for u in cfg["assignees"])
                 assignee_clause = f'assignee in ({users})'
             jql = f'status = "In Progress" AND {assignee_clause}'
-            url = f"{cfg['base_url'].rstrip('/')}/rest/api/2/search"
+            url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/myself"
             resp = await client.get(
                 url,
-                auth=(cfg["email"], cfg["token"]),
                 headers=headers,
-                params={"jql": jql},
             )
+
+            print(url)
+
+            # Output the Jira authentication status header for visibility.
+            # The "X-Seraph-Loginreason" header is set by Jira and indicates why a
+            # request may not have been authenticated (e.g. "OK" when auth
+            # succeeds, "AUTHENTICATED_FAILED" when it doesn't).  Printing it
+            # helps diagnose token / session problems without inspecting the
+            # whole response in a debugger.
+            print(f"[{cfg['name']}] X-Seraph-Loginreason: "
+                  f"{resp.headers.get('X-Seraph-Loginreason')}")
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"{cfg['name']}: {resp.text}")
             data = resp.json()
+
+            print(data)
             for issue in data.get("issues", []):
                 fields = issue.get("fields", {})
                 key = issue.get("key")
