@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  jira-api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    networks:
+      docker_static:
+        ipv4_address: 10.15.0.50
+
+networks:
+  docker_static:
+    external: true
