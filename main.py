@@ -71,35 +71,21 @@ async def get_in_progress_issues():
     flattened = []
     async with httpx.AsyncClient() as client:
         for cfg in configs:
-
-            print("The Jira Token: {}".format(cfg["token"]))
-
-            auth=cfg["email"] + ":" + cfg["token"]
-
-            print(f"AUTH WITH EXTENTS: [{auth}]")
-
+            autht=(cfg["email"], cfg["token"])
+            auth=":".join(autht)
             auth64b = base64.b64encode(auth.encode())
             auth64 = auth64b.decode()
 
-            print(auth64)
-
-            headers["Authorization"] = f"Basic {auth64}"
-
-            print(headers)
-
-            if len(cfg["assignees"]) == 1:
-                assignee_clause = f'assignee = "{cfg["assignees"][0]}"'
-            else:
-                users = ", ".join(f'"{u}"' for u in cfg["assignees"])
-                assignee_clause = f'assignee in ({users})'
-            jql = f'status = "In Progress" AND {assignee_clause}'
+            # Build JQL without an explicit ORDER BY clause. We will sort the results
+            # in Python after collecting issues from all instances so that the API
+            # consumer still receives tickets ordered by their last update time.
+            jql = 'status = "In Progress"'
             url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/myself"
             resp = await client.get(
                 url,
+                auth=autht,
                 headers=headers,
             )
-
-            print(url)
 
             # Output the Jira authentication status header for visibility.
             # The "X-Seraph-Loginreason" header is set by Jira and indicates why a
@@ -113,20 +99,55 @@ async def get_in_progress_issues():
                 raise HTTPException(status_code=resp.status_code, detail=f"{cfg['name']}: {resp.text}")
             data = resp.json()
 
-            print(data)
+            search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search"
+            resp = await client.get(
+                search_url,
+                auth=autht,
+                headers=headers,
+                params={"jql": jql},
+            )
+
+            print(search_url)
+
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"{cfg['name']}: {resp.text}")
+
+            data = resp.json()
             for issue in data.get("issues", []):
                 fields = issue.get("fields", {})
                 key = issue.get("key")
                 project = fields.get("project", {}).get("key")
-                assignee = fields.get("assignee", {}).get("emailAddress")
+                assignee = fields.get("assignee")
+
+                avatarUrl = None
+                name = None
+                if assignee:
+                    name = assignee.get("displayName")
+                    avatarUrls = assignee.get("avatarUrls")
+                    if avatarUrls:
+                        avatarUrl = avatarUrls.get("32x32")
+                updated = fields.get("updated")
+                # Jira's "duedate" field is an ISO-8601 date string (YYYY-MM-DD) or
+                # None when no due date is set on the issue.
+                due_date = fields.get("duedate")
+
                 title = fields.get("summary")
                 link = f"{cfg['base_url'].rstrip('/')}/browse/{key}"
                 flattened.append({
                     "instance": cfg["name"],
                     "ticket": key,
                     "project": project,
-                    "assignee": assignee,
+                    "assignee": name, 
+                    "avatarUrl": avatarUrl,
+                    "updated": updated,
+                    "dueDate": due_date,
                     "title": title,
                     "link": link,
                 })
+    # Sort the aggregated issues. Use the due date when present; fall back to the
+    # last updated timestamp otherwise. Both Jira date strings (YYYY-MM-DD for
+    # dueDate and the full ISO-8601 date-time for updated) compare correctly
+    # lexicographically, so we can sort directly on the raw value.
+    flattened.sort(key=lambda item: item.get("dueDate") or item.get("updated") or "")
+
     return flattened
