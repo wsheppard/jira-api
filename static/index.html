@@ -81,14 +81,67 @@
           </div>
         </a>
       </div>
+
     </template>
   </div>
+
+  <!-- Configured Repositories -->
+  <h1 class="mt-5">Repositories</h1>
+  <ul x-data="reposApp()" x-init="init()" class="list-group mb-5">
+    <template x-for="repo in repos" :key="repo.full">
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span x-text="repo.full"></span>
+        <template x-if="repo.link">
+          <a :href="repo.link" target="_blank" class="btn btn-sm btn-primary">Open</a>
+        </template>
+      </li>
+    </template>
+  </ul>
+
+  <!-- Latest Deployments -->
+  <h1 class="mt-5">Latest Deployments</h1>
+  <div x-data="deploymentsApp()" x-init="init()" class="table-responsive mb-5">
+    <table class="table table-striped table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Repository</th>
+          <th scope="col">Environment</th>
+          <th scope="col">Name</th>
+          <th scope="col">Result</th>
+          <th scope="col">Commit</th>
+          <th scope="col">Tag</th>
+          <th scope="col">Updated</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="d in deployments" :key="d.repository + d.environment">
+          <tr>
+            <td x-text="d.repository"></td>
+            <td x-text="d.environment"></td>
+            <td x-text="d.name"></td>
+            <td>
+              <span :class="badgeClass(d.result)" x-text="d.result"></span>
+            </td>
+            <td><code x-text="d.commit ? d.commit.substring(0,7) : '-' "></code></td>
+            <td x-text="d.tag || '-' "></td>
+            <td x-text="timeAgo(d.update_time)"></td>
+            <td>
+              <a :href="d.link" target="_blank" class="btn btn-sm btn-outline-primary" x-show="d.link">Open</a>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
 </div>
 <script>
   function ticketsApp() {
     return {
       tickets: [],
       timeAgo(dateString) {
+        if (!dateString) return '';
         const now = new Date();
         const updated = new Date(dateString);
         const diffMs = now - updated;
@@ -158,6 +211,79 @@
       init() {
         this.load();
         setInterval(() => this.load(), 10000); // update every 10 s
+      }
+    };
+  }
+
+  function reposApp() {
+    return {
+      repos: [],
+      async load() {
+        try {
+          const res = await fetch('/repos');
+          this.repos = res.ok ? await res.json() : [];
+        } catch (err) {
+          console.error('Failed to load repos:', err);
+        }
+      },
+      init() {
+        this.load();
+      }
+    };
+  }
+
+  function deploymentsApp() {
+    return {
+      deployments: [],
+      timeAgo(dateString) {
+        const now = new Date();
+        const updated = new Date(dateString);
+        const diffMs = now - updated;
+        const diffSec = Math.round(diffMs / 1000);
+        if (diffSec < 60) return `${diffSec} seconds ago`;
+        const diffMin = Math.round(diffSec / 60);
+        if (diffMin < 60) return `${diffMin} minutes ago`;
+        const diffHrs = Math.round(diffMin / 60);
+        if (diffHrs < 24) return `${diffHrs} hours ago`;
+        const diffDays = Math.round(diffHrs / 24);
+        return `${diffDays} days ago`;
+      },
+      badgeClass(result) {
+        const res = (result || '').toUpperCase();
+        switch (res) {
+          case 'SUCCESSFUL':
+          case 'COMPLETED':
+            return 'badge bg-success';
+          case 'FAILED':
+          case 'ERROR':
+          case 'FAILED_WITH_ERRORS':
+            return 'badge bg-danger';
+          case 'STOPPED':
+          case 'CANCELLED':
+            return 'badge bg-secondary';
+          case 'IN_PROGRESS':
+            return 'badge bg-warning text-dark';
+          default:
+            return 'badge bg-info';
+        }
+      },
+      async load() {
+        try {
+          const res = await fetch('/deployments');
+          if (res.ok) {
+            this.deployments = await res.json();
+          } else {
+            const txt = await res.text();
+            console.error('Failed to load deployments:', res.status, txt);
+            this.deployments = [];
+          }
+        } catch (err) {
+          console.error('Failed to load deployments:', err);
+        }
+      },
+      init() {
+        this.load();
+        setInterval(() => this.load(), 30000); // refresh every 30 seconds
       }
     };
   }
