@@ -119,7 +119,7 @@
           <tr>
             <td x-text="d.repository"></td>
             <td x-text="d.environment"></td>
-            <td x-text="d.name"></td>
+            <td x-text="d.name || d.environment"></td>
             <td>
               <span :class="badgeClass(d.result)" x-text="d.result"></span>
             </td>

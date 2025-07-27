@@ -269,6 +269,41 @@ async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
         )
     return commits
 
+def _commit_hash_from_deployment(item: Dict[str, Any]) -> str | None:
+    """Best-effort extraction of commit hash from a deployment/pipeline object."""
+
+    paths = [
+        ["commit", "hash"],
+        ["commit"],  # sometimes commit is directly a string
+        ["deployment", "commit", "hash"],
+        ["deployment", "commit"],
+        ["pull_request", "merge_commit", "hash"],
+        ["target", "commit", "hash"],  # pipelines structure
+    ]
+    for p in paths:
+        node = item
+        for k in p:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(k)
+        if node and isinstance(node, str):
+            return node
+
+    # Fallback: Bitbucket deployments may embed commit hash under
+    # "revision" or "source.commit.hash" in some older payloads.
+    alt = item.get("revision") or item.get("source", {}).get("commit", {}).get("hash")
+    if isinstance(alt, str):
+        return alt
+
+    # Extract from links.commit.href (…/commit/<hash>)
+    href = (
+        item.get("links", {}).get("commit", {}) or item.get("links", {}).get("html", {})
+    ).get("href")
+    if href and "/commit/" in href:
+        return href.rstrip("/").split("/commit/")[-1]
+
+    return None
 
 # Deployments (with pipeline fallback)
 @app.get("/deployments")
@@ -283,41 +318,38 @@ async def deployments():
 
     async with httpx.AsyncClient() as client:
 
-        def _commit_hash_from_deployment(item: Dict[str, Any]) -> str | None:
-            """Best-effort extraction of commit hash from a deployment/pipeline object."""
 
-            paths = [
-                ["commit", "hash"],
-                ["commit"],  # sometimes commit is directly a string
-                ["deployment", "commit", "hash"],
-                ["deployment", "commit"],
-                ["pull_request", "merge_commit", "hash"],
-                ["target", "commit", "hash"],  # pipelines structure
-            ]
-            for p in paths:
-                node = item
-                for k in p:
-                    if not isinstance(node, dict):
-                        node = None
-                        break
-                    node = node.get(k)
-                if node and isinstance(node, str):
-                    return node
+        # --------------------------------------------------------------
+        # Determine fallback workspaces for repositories where the caller
+        # provided only the repository slug ("my-repo") without the owning
+        # workspace ("my-workspace/my-repo").  The previous implementation
+        # attempted to read an undefined variable `discovered_workspaces`,
+        # which raised a NameError at runtime.  We now resolve a list of
+        # candidate workspaces once here so the subsequent loop can safely
+        # reference it.
+        #
+        # The resolution strategy is straightforward:
+        #   1.  Use BITBUCKET_DEFAULT_WORKSPACE if the user configured it.
+        #   2.  Otherwise fall back to the workspace extracted from fully
+        #       qualified repository entries that *do* include a workspace.
+        #   3.  If neither yields a value we end up with the empty string –
+        #       the later code simply skips over that iteration.
+        # --------------------------------------------------------------
 
-            # Fallback: Bitbucket deployments may embed commit hash under
-            # "revision" or "source.commit.hash" in some older payloads.
-            alt = item.get("revision") or item.get("source", {}).get("commit", {}).get("hash")
-            if isinstance(alt, str):
-                return alt
+        default_ws = os.getenv("BITBUCKET_DEFAULT_WORKSPACE", "").strip()
 
-            # Extract from links.commit.href (…/commit/<hash>)
-            href = (
-                item.get("links", {}).get("commit", {}) or item.get("links", {}).get("html", {})
-            ).get("href")
-            if href and "/commit/" in href:
-                return href.rstrip("/").split("/commit/")[-1]
+        # Collect any workspaces that were explicitly mentioned in the repo
+        # list so that we can reuse them as sensible defaults for bare slugs.
+        explicit_workspaces = {
+            r.split("/", 1)[0].strip()
+            for r in repos
+            if "/" in r and r.split("/", 1)[0].strip()
+        }
 
-            return None
+        discovered_workspaces: List[str] = []
+        if default_ws:
+            discovered_workspaces.append(default_ws)
+        discovered_workspaces.extend(sorted(explicit_workspaces))
 
         for repo_full in repos:
             if "/" in repo_full:
@@ -352,9 +384,6 @@ async def deployments():
                             env_name = env_obj.get("name") or env_obj.get("environment_type")
                         elif isinstance(env_obj, str):
                             env_name = env_obj
-
-                        print(f"[deploy]   env_raw={env_obj!r} ⇒ env_name={env_name}")
-
                         if not env_name and isinstance(env_obj, dict):
                             env_uuid = env_obj.get("uuid")
                             if env_uuid and env_uuid not in env_cache:
@@ -508,6 +537,20 @@ async def deployments():
                     or "UNKNOWN"
                 )
 
+                # Deployment and pipeline objects do not always expose a user
+                # friendly "name" field at the top-level.  Prefer the explicit
+                # attribute when present but gracefully fall back to a few
+                # commonly observed alternatives so that the dashboard always
+                # shows *something* meaningful in the Name column.
+
+                display_name = (
+                    d.get("name")
+                    or (d.get("deployment") or {}).get("name")
+                    or d.get("build_number")
+                    or d.get("uuid")
+                    or env  # last-ditch fallback – repeat the environment name
+                )
+
                 commit_hash = _commit_hash_from_deployment(d)
                 info = commit_cache.get(commit_hash, {}) if commit_hash else {}
 
@@ -515,7 +558,7 @@ async def deployments():
                     {
                         "repository": slug,
                         "environment": env,
-                        "name": d.get("name"),
+                        "name": display_name,
                         "commit": commit_hash,
                         "tag": info.get("tag"),
                         "update_time": d.get("update_time")
