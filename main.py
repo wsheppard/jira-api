@@ -26,7 +26,7 @@ from __future__ import annotations
 import base64
 import os
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -269,316 +269,113 @@ async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
         )
     return commits
 
+
+async def fetch_deployments(client: httpx.AsyncClient, auth: Tuple[str, str], workspace: str, slug: str) -> List[Dict[str, Any]]:
+    """
+    Fetch deployments for the given repository.
+    """
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/"
+    resp = await client.get(url, auth=auth, params={"pagelen": 20})
+    if resp.status_code != 200:
+        return []
+    return resp.json().get("values", [])
+
+def select_latest_by_env(deployments: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    From a list of deployments, select the latest deployment per environment.
+    """
+    latest: Dict[str, Dict[str, Any]] = {}
+    for d in deployments:
+        env_obj = d.get("environment")
+        env_name: str | None = None
+        if isinstance(env_obj, dict):
+            env_name = env_obj.get("name") or env_obj.get("environment_type")
+        elif isinstance(env_obj, str):
+            env_name = env_obj
+        if not env_name:
+            continue
+        ts = d.get("update_time") or d.get("updated_on") or d.get("completed_on") or d.get("created_on") or ""
+        if env_name not in latest or ts > (latest[env_name].get("update_time") or ""):
+            latest[env_name] = d
+    return latest
+
 def _commit_hash_from_deployment(item: Dict[str, Any]) -> str | None:
-    """Best-effort extraction of commit hash from a deployment/pipeline object."""
-
-    paths = [
-        ["commit", "hash"],
-        ["commit"],  # sometimes commit is directly a string
-        ["deployment", "commit", "hash"],
-        ["deployment", "commit"],
-        ["pull_request", "merge_commit", "hash"],
-        ["target", "commit", "hash"],  # pipelines structure
-    ]
-    for p in paths:
-        node = item
-        for k in p:
-            if not isinstance(node, dict):
-                node = None
-                break
-            node = node.get(k)
-        if node and isinstance(node, str):
-            return node
-
-    # Fallback: Bitbucket deployments may embed commit hash under
-    # "revision" or "source.commit.hash" in some older payloads.
-    alt = item.get("revision") or item.get("source", {}).get("commit", {}).get("hash")
-    if isinstance(alt, str):
-        return alt
-
-    # Extract from links.commit.href (…/commit/<hash>)
-    href = (
-        item.get("links", {}).get("commit", {}) or item.get("links", {}).get("html", {})
-    ).get("href")
+    """Best-effort extraction of commit hash from a deployment object."""
+    href = (item.get("links", {}).get("commit", {}) or item.get("links", {}).get("html", {})).get("href")
     if href and "/commit/" in href:
         return href.rstrip("/").split("/commit/")[-1]
-
     return None
 
-# Deployments (with pipeline fallback)
-@app.get("/deployments")
-async def deployments():
-    """Latest deployment (or pipeline) per environment for configured repos."""
-    email, token = _bitbucket_auth()
+async def enrich_commits(client: httpx.AsyncClient, auth: Tuple[str, str], workspace: str, slug: str, commit_hashes: list[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetch commit message, date, and tag for each commit hash.
+    """
+    commit_cache: Dict[str, Dict[str, Any]] = {}
+    for commit_hash in commit_hashes:
+        # commit details
+        url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/commit/{commit_hash}"
+        resp = await client.get(url, auth=auth)
+        message = None
+        date_str = None
+        if resp.status_code == 200:
+            data = resp.json()
+            message = data.get("message")
+            date_str = data.get("date") or data.get("author", {}).get("date")
+        # tag lookup
+        tags_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/refs/tags"
+        resp_t = await client.get(tags_url, auth=auth, params={"q": f'target.hash="{commit_hash}"', "pagelen": 1})
+        tag = None
+        if resp_t.status_code == 200:
+            vals = resp_t.json().get("values", [])
+            if vals:
+                tag = vals[0].get("name")
+        commit_cache[commit_hash] = {"message": message, "date": date_str, "tag": tag}
+    return commit_cache
 
+@app.get("/deployments")
+async def deployments() -> list[Dict[str, Any]]:
+    """
+    Latest deployment per environment for configured repos.
+    """
+    email, token = _bitbucket_auth()
     repos_env = os.getenv("BITBUCKET_REPOS", "palliativa/frontend,palliativa/backend")
     repos = [r.strip() for r in repos_env.split(",") if r.strip()]
-
     out: List[Dict[str, Any]] = []
 
+    auth = (email, token)
     async with httpx.AsyncClient() as client:
-
-
-        # --------------------------------------------------------------
-        # Determine fallback workspaces for repositories where the caller
-        # provided only the repository slug ("my-repo") without the owning
-        # workspace ("my-workspace/my-repo").  The previous implementation
-        # attempted to read an undefined variable `discovered_workspaces`,
-        # which raised a NameError at runtime.  We now resolve a list of
-        # candidate workspaces once here so the subsequent loop can safely
-        # reference it.
-        #
-        # The resolution strategy is straightforward:
-        #   1.  Use BITBUCKET_DEFAULT_WORKSPACE if the user configured it.
-        #   2.  Otherwise fall back to the workspace extracted from fully
-        #       qualified repository entries that *do* include a workspace.
-        #   3.  If neither yields a value we end up with the empty string –
-        #       the later code simply skips over that iteration.
-        # --------------------------------------------------------------
-
-        default_ws = os.getenv("BITBUCKET_DEFAULT_WORKSPACE", "").strip()
-
-        # Collect any workspaces that were explicitly mentioned in the repo
-        # list so that we can reuse them as sensible defaults for bare slugs.
-        explicit_workspaces = {
-            r.split("/", 1)[0].strip()
-            for r in repos
-            if "/" in r and r.split("/", 1)[0].strip()
-        }
-
-        discovered_workspaces: List[str] = []
-        if default_ws:
-            discovered_workspaces.append(default_ws)
-        discovered_workspaces.extend(sorted(explicit_workspaces))
-
         for repo_full in repos:
-            if "/" in repo_full:
-                workspace, slug = repo_full.split("/", 1)
-                workspace_candidates = [workspace]
-            else:
-                slug = repo_full
-                workspace_candidates = discovered_workspaces or [""]
-
-            success_any_workspace = False
-            latest_by_env: Dict[str, Any] = {}
-
-            env_cache: Dict[str, str] = {}
-
-
-            for workspace in workspace_candidates:
-                if not workspace:
-                    continue
-
-                # 1. try deployments API
-                url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/"
-                print(f"[deploy] GET {url}")
-                resp = await client.get(url, auth=(email, token), params={"pagelen": 20})
-                print(f"[deploy] → status {resp.status_code} – {len(resp.json().get('values', [])) if resp.status_code == 200 else 'n/a'} items")
-                latest_by_env: Dict[str, Any] = {}
-                if resp.status_code == 200:
-                    success_any_workspace = True
-                    for d in resp.json().get("values", []):
-                        env_obj = d.get("environment")
-                        env_name = None
-                        if isinstance(env_obj, dict):
-                            env_name = env_obj.get("name") or env_obj.get("environment_type")
-                        elif isinstance(env_obj, str):
-                            env_name = env_obj
-                        if not env_name and isinstance(env_obj, dict):
-                            env_uuid = env_obj.get("uuid")
-                            if env_uuid and env_uuid not in env_cache:
-                                env_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments_config/environments/{env_uuid.strip('{}')}"
-                                print(f"[deploy]   GET {env_url} (resolve env uuid)")
-                                env_resp = await client.get(env_url, auth=(email, token))
-                                if env_resp.status_code == 200:
-                                    env_cache[env_uuid] = env_resp.json().get("name") or env_resp.json().get("environment_type")
-                                    print(f"[deploy]   → env_name={env_cache[env_uuid]}")
-                                else:
-                                    env_cache[env_uuid] = None
-
-                            env_name = env_cache.get(env_uuid)
-
-                        if not env_name:
-                            continue
-
-                        ts = (
-                            d.get("update_time")
-                            or d.get("updated_on")
-                            or d.get("completed_on")
-                            or d.get("created_on")
-                            or ""
-                        )
-                        if env_name not in latest_by_env or ts > (latest_by_env[env_name].get("update_time") or ""):
-                            latest_by_env[env_name] = d
-
-                        # Dump raw deployment JSON for debugging (truncated to 1 kB)
-                        import json as _json
-
-                        raw_json = _json.dumps(d, default=str)
-                        print(
-                            f"[deploy]   RAW deployment {env_name}: " + raw_json[:4000]
-                        )
-
-                # fallback to pipelines if no deployments
-                if not latest_by_env:
-                    pipe_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/pipelines/"
-                    print(f"[deploy] GET {pipe_url}")
-                    resp_p = await client.get(
-                        pipe_url,
-                        auth=(email, token),
-                        params={"pagelen": 10, "sort": "-created_on"},
-                    )
-                    print(f"[deploy] → status {resp_p.status_code} – {len(resp_p.json().get('values', [])) if resp_p.status_code == 200 else 'n/a'} items")
-                    if resp_p.status_code == 200:
-                        success_any_workspace = True
-                        for p in resp_p.json().get("values", []):
-                            state = p.get("state", {})
-                            result = state.get("result", {}).get("name") or state.get("name")
-
-                            # Skip pipelines that are still running/cancelled etc.
-                            if result in {"IN_PROGRESS", "PENDING", "BUILDING"}:
-                                continue
-
-                            env_key = p.get("target", {}).get("ref_name", "pipeline")
-                            latest_by_env[env_key] = {
-                                "name": p.get("name") or p.get("build_number"),
-                                "commit": p.get("target", {}).get("commit", {}).get("hash"),
-                                "update_time": p.get("completed_on") or p.get("created_on"),
-                                "state": {"result": result},
-                                "links": p.get("links"),
-                            }
-
-                            break
-
-                # If we found something for this workspace or received 403/404 try next? Break if found
-                if latest_by_env:
-                    break
-
-            # If no workspace produced data, skip
-            if not latest_by_env and not success_any_workspace:
+            if "/" not in repo_full:
+                continue
+            workspace, slug = repo_full.split("/", 1)
+            deployments_list = await fetch_deployments(client, auth, workspace, slug)
+            latest_by_env = select_latest_by_env(deployments_list)
+            if not latest_by_env:
                 continue
 
-            # ------------------------------------------------------------
-            # Fetch commit details & tag for the selected deployments
-            # ------------------------------------------------------------
-
-            commit_cache: Dict[str, Dict[str, Any]] = {}
-
-
-            async def _enrich_commit(commit_hash: str):
-                if commit_hash in commit_cache:
-                    return
-
-                commit_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/commit/{commit_hash}"
-                resp_c = await client.get(commit_url, auth=(email, token))
-                message = date_str = None
-                if resp_c.status_code == 200:
-                    j = resp_c.json()
-                    message = j.get("message")
-                    date_str = j.get("date") or j.get("author", {}).get("date")
-
-                # tag lookup
-                tags_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/refs/tags"
-                resp_t = await client.get(tags_url, auth=(email, token), params={"q": f'target.hash="{commit_hash}"', "pagelen": 1})
-                tag = None
-                if resp_t.status_code == 200:
-                    tags_vals = resp_t.json().get("values", [])
-                    if tags_vals:
-                        tag = tags_vals[0].get("name")
-
-                commit_cache[commit_hash] = {"message": message, "date": date_str, "tag": tag}
-
-            # collect awaitables
-            to_enrich: List[str] = []
+            commit_hashes: list[str] = []
             for d in latest_by_env.values():
                 ch = _commit_hash_from_deployment(d)
                 if ch:
-                    to_enrich.append(ch)
-                else:
-                    print(
-                        f"[deploy]   WARNING: no commit hash found in deployment {d.get('uuid') or d.get('name')}. Attempt detail fetch."
-                    )
-
-                    dep_uuid = (
-                        d.get("uuid")
-                        or (d.get("deployment") or {}).get("uuid")
-                        or None
-                    )
-                    if dep_uuid:
-                        detail_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/{dep_uuid.strip('{}')}"
-                        print(f"[deploy]   GET {detail_url} (detail)")
-                        dep_resp = await client.get(detail_url, auth=(email, token))
-                        if dep_resp.status_code == 200:
-                            dep_full = dep_resp.json()
-                            # merge into original dict for later field lookups
-                            d.update(dep_full)
-                            ch2 = _commit_hash_from_deployment(dep_full)
-                            if ch2 and ch2 not in to_enrich:
-                                print(f"[deploy]   → commit resolved {ch2[:7]}")
-                                to_enrich.append(ch2)
-                                d["commit"] = {"hash": ch2}
-                        else:
-                            print(f"[deploy]   → detail fetch failed status {dep_resp.status_code}")
-
-            # fetch commit info sequentially (few commits) – keeps code simple
-            for ch in to_enrich:
-                await _enrich_commit(ch)
-                print(f"[deploy]   commit {ch[:7]} enriched: tag={commit_cache[ch].get('tag')}")
+                    commit_hashes.append(ch)
+            commit_cache = await enrich_commits(client, auth, workspace, slug, commit_hashes)
 
             for env, d in latest_by_env.items():
-                # Deployment objects may have a "state" dict (subfields differ
-                # from pipelines). Pipelines have state.result.name etc. We try
-                # several fallbacks and default to "UNKNOWN".
-                state_obj = d.get("state") or d.get("deployment_state") or {}
-                result = (
-                    state_obj.get("result")
-                    or (state_obj.get("name") if isinstance(state_obj.get("name"), str) else None)
-                    or state_obj.get("status")
-                    or "UNKNOWN"
-                )
-
-                # Deployment and pipeline objects do not always expose a user
-                # friendly "name" field at the top-level.  Prefer the explicit
-                # attribute when present but gracefully fall back to a few
-                # commonly observed alternatives so that the dashboard always
-                # shows *something* meaningful in the Name column.
-
-                display_name = (
-                    d.get("name")
-                    or (d.get("deployment") or {}).get("name")
-                    or d.get("build_number")
-                    or d.get("uuid")
-                    or env  # last-ditch fallback – repeat the environment name
-                )
-
                 commit_hash = _commit_hash_from_deployment(d)
                 info = commit_cache.get(commit_hash, {}) if commit_hash else {}
-
-                out.append(
-                    {
-                        "repository": slug,
-                        "environment": env,
-                        "name": display_name,
-                        "commit": commit_hash,
-                        "tag": info.get("tag"),
-                        "update_time": d.get("update_time")
-                        or d.get("updated_on")
-                        or d.get("completed_on")
-                        or d.get("created_on"),
-                        "result": result,
-                        "link": d.get("links", {}).get("html", {}).get("href"),
-                    }
-                )
-
-                # log summary line for each env we captured
-                summary_commit = (commit_hash or "")[:7]
-                print(
-                    f"[deploy] {workspace}/{slug} env={env} result={result} commit={summary_commit} tag={info.get('tag') or '-'}"
-                )
+                out.append({
+                    "repository": slug,
+                    "environment": env,
+                    "name": d.get("name") or d.get("uuid") or env,
+                    "commit": commit_hash,
+                    "tag": info.get("tag"),
+                    "update_time": d.get("update_time") or d.get("updated_on") or d.get("completed_on") or d.get("created_on"),
+                    "result": (d.get("state") or d.get("deployment_state") or {}).get("result") or None,
+                    "link": d.get("links", {}).get("html", {}).get("href"),
+                })
 
     out.sort(key=lambda x: (x["repository"], x["environment"]))
     return out
-
 
 # Repo list
 @app.get("/bitbucket-repos")
