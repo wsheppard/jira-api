@@ -253,3 +253,92 @@ async def get_open_issues_by_due_date():
     aggregated.sort(key=sort_key)
 
     return aggregated
+
+
+# ---------------------------------------------------------------------------
+# Bitbucket API token validation endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/bitbucket-test")
+async def bitbucket_token_test():
+    """Verify that the configured Bitbucket Cloud **API token** works.
+
+    Bitbucket’s new *API tokens* replace the old app-passwords but they are still
+    supplied through **HTTP Basic auth**: your Atlassian-account e-mail is the
+    *username* and the api-token string is the *password*.
+
+    This endpoint calls ``/2.0/user`` with basic auth and returns a minimal
+    payload when it succeeds so that operators can confirm that the token and
+    scopes are correct.
+    """
+
+    email = os.getenv("BITBUCKET_EMAIL")
+    token = os.getenv("BITBUCKET_API_TOKEN")
+
+    missing = [name for name, val in [("BITBUCKET_EMAIL", email), ("BITBUCKET_API_TOKEN", token)] if not val]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Missing env vars: {', '.join(missing)}")
+
+    url = "https://api.bitbucket.org/2.0/user"
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, auth=(email, token))
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    data = resp.json()
+    return {
+        "uuid": data.get("uuid"),
+        "username": data.get("username"),
+        "display_name": data.get("display_name"),
+        "links": data.get("links", {}).get("html", {}).get("href"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bitbucket list commits helper
+# ---------------------------------------------------------------------------
+
+
+@app.get("/bitbucket-commits")
+async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
+    """Return the most recent *limit* commits for the given repo.
+
+    Query parameters:
+      workspace – Bitbucket workspace slug
+      repo      – repository slug
+      limit     – max commits to return (default 10)
+
+    Requires the same ``BITBUCKET_EMAIL`` / ``BITBUCKET_API_TOKEN`` env vars as
+    /bitbucket-test and that the token has *Repository Read* scope.
+    """
+
+    email = os.getenv("BITBUCKET_EMAIL")
+    token = os.getenv("BITBUCKET_API_TOKEN")
+    if not email or not token:
+        raise HTTPException(status_code=500, detail="BITBUCKET_EMAIL and BITBUCKET_API_TOKEN must be set")
+
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/commits"
+    params = {"pagelen": limit}
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, auth=(email, token), params=params)
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    data = resp.json()
+    commits = [
+        {
+            "hash": c.get("hash"),
+            "date": c.get("date"),
+            "message": (c.get("message") or "").split("\n")[0],
+            "author": c.get("author", {}).get("raw"),
+            "link": c.get("links", {}).get("html", {}).get("href"),
+        }
+        for c in data.get("values", [])
+    ]
+
+    return commits

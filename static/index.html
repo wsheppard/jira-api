@@ -30,34 +30,9 @@
 </head>
 <body>
 <div class="container my-4">
-  <h1>In Progress Tickets</h1>
-  <div x-data="ticketsApp()" x-init="init()" class="row row-cols-1 row-cols-md-3 g-4 mb-5">
-    <template x-for="ticket in tickets" :key="ticket.ticket">
-      <div class="col">
-        <a :href="ticket.link" target="_blank" class="text-decoration-none text-body">
-          <div :class="{'card h-100 shadow': true, 'stale': daysOld(ticket.updated) >= 5}">
-            <div :class="daysOld(ticket.updated) >= 5 ? 'bg-danger text-white card-header' : 'card-header'">
-              <span class="ticket-key d-block text-truncate" x-text="ticket.ticket"></span>
-            </div>
-            <div class="card-body">
-              <p class="card-text" x-text="ticket.title"></p>
-              <p class="card-text"><small class="text-muted" x-text="'Updated: ' + timeAgo(ticket.updated)"></small></p>
-              <template x-if="ticket.dueDate">
-                <p class="card-text"><small class="text-muted" x-text="'Due: ' + ticket.dueDate"></small></p>
-              </template>
-              <p class="card-text">
-                <img :src="ticket.avatarUrl" :alt="ticket.assignee" class="rounded-circle me-2" width="32" height="32">
-                <small class="text-muted" x-text="'Assignee: ' + ticket.assignee"></small>
-              </p>
-            </div>
-          </div>
-        </a>
-      </div>
-    </template>
-  </div>
-
+  <!-- Open tickets by due date first -->
   <h1>Open Tickets by Due Date</h1>
-  <div x-data="dueApp()" x-init="init()" class="row row-cols-1 row-cols-md-3 g-4">
+  <div x-data="dueApp()" x-init="init()" class="row row-cols-1 row-cols-md-3 g-4 mb-5">
     <template x-for="ticket in tickets" :key="ticket.ticket">
       <div class="col">
         <a :href="ticket.link" target="_blank" class="text-decoration-none text-body">
@@ -71,6 +46,33 @@
                 <p class="card-text"><small class="text-muted" x-text="'Due: ' + ticket.dueDate"></small></p>
               </template>
               <p class="card-text"><small class="text-muted" x-text="'Updated: ' + timeAgo(ticket.updated)"></small></p>
+              <p class="card-text">
+                <img :src="ticket.avatarUrl" :alt="ticket.assignee" class="rounded-circle me-2" width="32" height="32">
+                <small class="text-muted" x-text="'Assignee: ' + ticket.assignee"></small>
+              </p>
+            </div>
+          </div>
+        </a>
+      </div>
+    </template>
+  </div>
+
+  <!-- In-progress tickets below -->
+  <h1>In Progress Tickets</h1>
+  <div x-data="ticketsApp()" x-init="init()" class="row row-cols-1 row-cols-md-3 g-4">
+    <template x-for="ticket in tickets" :key="ticket.ticket">
+      <div class="col">
+        <a :href="ticket.link" target="_blank" class="text-decoration-none text-body">
+          <div :class="{'card h-100 shadow': true, 'stale': daysOld(ticket.updated) >= 5}">
+            <div :class="daysOld(ticket.updated) >= 5 ? 'bg-danger text-white card-header' : 'card-header'">
+              <span class="ticket-key d-block text-truncate" x-text="ticket.ticket"></span>
+            </div>
+            <div class="card-body">
+              <p class="card-text" x-text="ticket.title"></p>
+              <p class="card-text"><small class="text-muted" x-text="'Updated: ' + timeAgo(ticket.updated)"></small></p>
+              <template x-if="ticket.dueDate">
+                <p class="card-text"><small class="text-muted" x-text="'Due: ' + ticket.dueDate"></small></p>
+              </template>
               <p class="card-text">
                 <img :src="ticket.avatarUrl" :alt="ticket.assignee" class="rounded-circle me-2" width="32" height="32">
                 <small class="text-muted" x-text="'Assignee: ' + ticket.assignee"></small>
@@ -98,12 +100,6 @@
         if (diffHrs < 24) return `${diffHrs} hours ago`;
         const diffDays = Math.round(diffHrs / 24);
         return `${diffDays} days ago`;
-      },
-      isOverdue(dateString) {
-        if (!dateString) return false;
-        const today = new Date();
-        const due = new Date(dateString + 'T00:00:00');
-        return due < today;
       },
       isOverdue(dateString) {
         if (!dateString) return false;
@@ -145,6 +141,12 @@
         const diffDays = Math.round(diffHrs / 24);
         return `${diffDays} days ago`;
       },
+      isOverdue(dateString) {
+        if (!dateString) return false;
+        const today = new Date();
+        const due = new Date(dateString + 'T00:00:00');
+        return due < today;
+      },
       async load() {
         try {
           const res = await fetch('/open-issues-by-due');
@@ -155,7 +157,7 @@
       },
       init() {
         this.load();
-        setInterval(() => this.load(), 30000); // update every 30 s
+        setInterval(() => this.load(), 10000); // update every 10 s
       }
     };
   }
