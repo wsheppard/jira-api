@@ -89,10 +89,22 @@
   <h1 class="mt-5">Repositories</h1>
   <ul x-data="reposApp()" class="list-group mb-5">
     <template x-for="repo in repos" :key="repo.full">
-      <li class="list-group-item d-flex justify-content-between align-items-center">
-        <span x-text="repo.full"></span>
-        <template x-if="repo.link">
-          <a :href="repo.link" target="_blank" class="btn btn-sm btn-primary">Open</a>
+      <li class="list-group-item">
+        <div class="d-flex justify-content-between align-items-center">
+          <span x-text="repo.full"></span>
+          <template x-if="repo.link">
+            <a :href="repo.link" target="_blank" class="btn btn-sm btn-primary">Open</a>
+          </template>
+        </div>
+        <template x-if="repo.environments && repo.environments.length">
+          <div class="mt-2">
+            <small class="text-muted">Environments:</small>
+            <ul class="list-inline mb-0">
+              <template x-for="env in repo.environments" :key="env">
+                <li class="list-inline-item badge bg-secondary text-white" x-text="env"></li>
+              </template>
+            </ul>
+          </div>
         </template>
       </li>
     </template>

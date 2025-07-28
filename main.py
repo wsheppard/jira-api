@@ -280,7 +280,21 @@ async def fetch_deployments(client: httpx.AsyncClient, auth: Tuple[str, str], wo
     resp = await client.get(url, auth=auth, params={"pagelen": 20})
     if resp.status_code != 200:
         return []
-    return resp.json().get("values", [])
+    data = resp.json()
+    ret = data.get("values", [])
+    return ret
+
+
+async def fetch_environments(client: httpx.AsyncClient, auth: Tuple[str, str], workspace: str, slug: str) -> List[Dict[str, Any]]:
+    """
+    Fetch environments for the given repository, including last_deployment for each environment.
+    """
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/environments"
+    resp = await client.get(url, auth=auth, params={"pagelen": 50})
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    return data.get("values", [])
 
 def select_latest_by_env(deployments: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
@@ -350,30 +364,36 @@ async def deployments() -> list[Dict[str, Any]]:
             if "/" not in repo_full:
                 continue
             workspace, slug = repo_full.split("/", 1)
-            deployments_list = await fetch_deployments(client, auth, workspace, slug)
-            latest_by_env = select_latest_by_env(deployments_list)
-            if not latest_by_env:
+            envs = await fetch_environments(client, auth, workspace, slug)
+            if not envs:
                 continue
 
             commit_hashes: list[str] = []
-            for d in latest_by_env.values():
-                ch = _commit_hash_from_deployment(d)
+            for env in envs:
+                ld = env.get("last_deployment")
+                if not ld:
+                    continue
+                ch = _commit_hash_from_deployment(ld)
                 if ch:
                     commit_hashes.append(ch)
             commit_cache = await enrich_commits(client, auth, workspace, slug, commit_hashes)
 
-            for env, d in latest_by_env.items():
-                commit_hash = _commit_hash_from_deployment(d)
+            for env in envs:
+                ld = env.get("last_deployment")
+                if not ld:
+                    continue
+                commit_hash = _commit_hash_from_deployment(ld)
                 info = commit_cache.get(commit_hash, {}) if commit_hash else {}
+                env_name = env.get("name") or env.get("environment_type") or ""
                 out.append({
                     "repository": slug,
-                    "environment": env,
-                    "name": d.get("name") or d.get("uuid") or env,
+                    "environment": env_name,
+                    "name": ld.get("name") or ld.get("uuid") or env_name,
                     "commit": commit_hash,
                     "tag": info.get("tag"),
-                    "update_time": d.get("update_time") or d.get("updated_on") or d.get("completed_on") or d.get("created_on"),
-                    "result": (d.get("state") or d.get("deployment_state") or {}).get("result") or None,
-                    "link": d.get("links", {}).get("html", {}).get("href"),
+                    "update_time": ld.get("update_time") or ld.get("updated_on") or ld.get("completed_on") or ld.get("created_on"),
+                    "result": (ld.get("state") or ld.get("deployment_state") or {}).get("result") or None,
+                    "link": ld.get("links", {}).get("html", {}).get("href"),
                 })
 
     out.sort(key=lambda x: (x["repository"], x["environment"]))
@@ -416,32 +436,47 @@ async def bitbucket_repos(workspace: str):
 
 
 @app.get("/repos")
-async def repo_list():
-    """Return list of repository slugs configured via BITBUCKET_REPOS env var.
+async def repo_list() -> List[Dict[str, Any]]:
+    """Return list of repository slugs configured via BITBUCKET_REPOS env var,
+    along with deployment environments per repo.
 
     The response structure is a list of objects with:
 
-        workspace – workspace/owner part (may be empty if not provided)
-        slug      – repository slug (name)
-        full      – original "workspace/slug" string
-        link      – public Bitbucket URL if workspace was included
+        workspace     – workspace/owner part (may be empty if not provided)
+        slug          – repository slug (name)
+        full          – original "workspace/slug" string
+        link          – public Bitbucket URL if workspace was included
+        environments  – list of environment names for deployments in that repo
     """
-
-    # Re-use the same default list as the /deployments endpoint so that the UI
-    # always shows at least those example repositories unless overridden via
-    # BITBUCKET_REPOS.
+    email, token = _bitbucket_auth()
     repos_env = os.getenv("BITBUCKET_REPOS", "palliativa/frontend,palliativa/backend")
     repos_raw = [r.strip() for r in repos_env.split(",") if r.strip()]
 
-    out: List[Dict[str, str]] = []
-    for repo in repos_raw:
-        if "/" in repo:
-            workspace, slug = repo.split("/", 1)
-            link = f"https://bitbucket.org/{workspace}/{slug}"
-        else:
-            workspace = ""
-            slug = repo
-            link = ""
-        out.append({"workspace": workspace, "slug": slug, "full": repo, "link": link})
-
+    out: List[Dict[str, Any]] = []
+    auth = (email, token)
+    async with httpx.AsyncClient() as client:
+        for repo in repos_raw:
+            if "/" in repo:
+                workspace, slug = repo.split("/", 1)
+                link = f"https://bitbucket.org/{workspace}/{slug}"
+                envs = await fetch_environments(client, auth, workspace, slug)
+                env_names = [
+                    e.get("name") or e.get("environment_type") or ""
+                    for e in envs
+                    if e.get("name") or e.get("environment_type")
+                ]
+            else:
+                workspace = ""
+                slug = repo
+                link = ""
+                env_names: List[str] = []
+            out.append(
+                {
+                    "workspace": workspace,
+                    "slug": slug,
+                    "full": repo,
+                    "link": link,
+                    "environments": env_names,
+                }
+            )
     return out
