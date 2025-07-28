@@ -35,6 +35,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import logging
+import asyncio
 
 # enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
 logging.basicConfig(level=logging.DEBUG)
@@ -334,7 +335,9 @@ async def enrich_commits(client: httpx.AsyncClient, auth: Tuple[str, str], works
         date_str = None
         if resp.status_code == 200:
             data = resp.json()
-            message = data.get("message")
+            # show only first line of commit message as name
+            raw_msg = data.get("message") or ""
+            message = raw_msg.split("\n")[0]
             date_str = data.get("date") or data.get("author", {}).get("date")
         # tag lookup
         tags_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/refs/tags"
@@ -367,14 +370,21 @@ async def deployments() -> list[Dict[str, Any]]:
             if not envs:
                 continue
 
+            # fetch latest deployment per environment concurrently
+            tasks: list[asyncio.Task[list[Dict[str, Any]]]] = []
             for env in envs:
                 env_uuid = env.get("uuid")
                 if not env_uuid:
                     continue
-                deps = await fetch_deployments(client, auth, workspace, slug, environment_uuid=env_uuid)
-                if not deps:
+                tasks.append(asyncio.create_task(
+                    fetch_deployments(client, auth, workspace, slug, environment_uuid=env_uuid)
+                ))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for env, res in zip(envs, results):
+                if isinstance(res, Exception) or not res:
                     continue
-                ld = deps[0]
+                ld = res[0]
                 commit_hash = _commit_hash_from_deployment(ld)
                 commit_data: Dict[str, Any] = {}
                 if commit_hash:
@@ -384,7 +394,7 @@ async def deployments() -> list[Dict[str, Any]]:
                 out.append({
                     "repository": slug,
                     "environment": env_name,
-                    "name": ld.get("name") or ld.get("uuid") or env_name,
+                    "name": commit_data.get("message") or ld.get("name") or ld.get("uuid") or env_name,
                     "commit": commit_hash,
                     "tag": commit_data.get("tag"),
                     "update_time": ld.get("update_time") or ld.get("updated_on") or ld.get("completed_on") or ld.get("created_on"),
