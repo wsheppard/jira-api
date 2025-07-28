@@ -34,6 +34,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import logging
+
+# enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("httpx").setLevel(logging.DEBUG)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 # ---------------------------------------------------------------------------
 # Jira configuration
 # ---------------------------------------------------------------------------
@@ -272,24 +280,32 @@ async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
     return commits
 
 
-async def fetch_deployments(client: httpx.AsyncClient, auth: Tuple[str, str], workspace: str, slug: str) -> List[Dict[str, Any]]:
+async def fetch_deployments(
+    client: httpx.AsyncClient,
+    auth: Tuple[str, str],
+    workspace: str,
+    slug: str,
+    environment_uuid: str | None = None,
+) -> List[Dict[str, Any]]:
     """
-    Fetch deployments for the given repository.
+    Fetch deployments for the given repository, optionally filtered by environment UUID.
     """
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/"
-    resp = await client.get(url, auth=auth, params={"pagelen": 20})
+    params: Dict[str, Any] = {"pagelen": 1} if environment_uuid else {"pagelen": 20}
+    if environment_uuid:
+        params["environment_uuid"] = environment_uuid
+    resp = await client.get(url, auth=auth, params=params)
     if resp.status_code != 200:
         return []
     data = resp.json()
-    ret = data.get("values", [])
-    return ret
+    return data.get("values", [])
 
 
 async def fetch_environments(client: httpx.AsyncClient, auth: Tuple[str, str], workspace: str, slug: str) -> List[Dict[str, Any]]:
     """
     Fetch environments for the given repository, including last_deployment for each environment.
     """
-    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments_config/environments"
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/environments"
     resp = await client.get(url, auth=auth, params={"pagelen": 50})
     if resp.status_code != 200:
         # Propagate any error including 404 so callers can detect failures
@@ -297,24 +313,6 @@ async def fetch_environments(client: httpx.AsyncClient, auth: Tuple[str, str], w
     data = resp.json()
     return data.get("values", [])
 
-def select_latest_by_env(deployments: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """
-    From a list of deployments, select the latest deployment per environment.
-    """
-    latest: Dict[str, Dict[str, Any]] = {}
-    for d in deployments:
-        env_obj = d.get("environment")
-        env_name: str | None = None
-        if isinstance(env_obj, dict):
-            env_name = env_obj.get("name") or env_obj.get("environment_type")
-        elif isinstance(env_obj, str):
-            env_name = env_obj
-        if not env_name:
-            continue
-        ts = d.get("update_time") or d.get("updated_on") or d.get("completed_on") or d.get("created_on") or ""
-        if env_name not in latest or ts > (latest[env_name].get("update_time") or ""):
-            latest[env_name] = d
-    return latest
 
 def _commit_hash_from_deployment(item: Dict[str, Any]) -> str | None:
     """Best-effort extraction of commit hash from a deployment object."""
@@ -369,29 +367,26 @@ async def deployments() -> list[Dict[str, Any]]:
             if not envs:
                 continue
 
-            commit_hashes: list[str] = []
             for env in envs:
-                ld = env.get("last_deployment")
-                if not ld:
+                env_uuid = env.get("uuid")
+                if not env_uuid:
                     continue
-                ch = _commit_hash_from_deployment(ld)
-                if ch:
-                    commit_hashes.append(ch)
-            commit_cache = await enrich_commits(client, auth, workspace, slug, commit_hashes)
-
-            for env in envs:
-                ld = env.get("last_deployment")
-                if not ld:
+                deps = await fetch_deployments(client, auth, workspace, slug, environment_uuid=env_uuid)
+                if not deps:
                     continue
+                ld = deps[0]
                 commit_hash = _commit_hash_from_deployment(ld)
-                info = commit_cache.get(commit_hash, {}) if commit_hash else {}
+                commit_data: Dict[str, Any] = {}
+                if commit_hash:
+                    cache = await enrich_commits(client, auth, workspace, slug, [commit_hash])
+                    commit_data = cache.get(commit_hash, {})
                 env_name = env.get("name") or env.get("environment_type") or ""
                 out.append({
                     "repository": slug,
                     "environment": env_name,
                     "name": ld.get("name") or ld.get("uuid") or env_name,
                     "commit": commit_hash,
-                    "tag": info.get("tag"),
+                    "tag": commit_data.get("tag"),
                     "update_time": ld.get("update_time") or ld.get("updated_on") or ld.get("completed_on") or ld.get("created_on"),
                     "result": (ld.get("state") or ld.get("deployment_state") or {}).get("result") or None,
                     "link": ld.get("links", {}).get("html", {}).get("href"),
