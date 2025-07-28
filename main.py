@@ -289,10 +289,11 @@ async def fetch_environments(client: httpx.AsyncClient, auth: Tuple[str, str], w
     """
     Fetch environments for the given repository, including last_deployment for each environment.
     """
-    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/environments"
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments_config/environments"
     resp = await client.get(url, auth=auth, params={"pagelen": 50})
     if resp.status_code != 200:
-        return []
+        # Propagate any error including 404 so callers can detect failures
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
     data = resp.json()
     return data.get("values", [])
 
