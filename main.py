@@ -52,45 +52,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+# Load .env and require a single Atlassian API token for all requests
 load_dotenv()
+email = "will@jjrsoftware.co.uk"
+token = os.getenv("ATLASSIAN_API_TOKEN")
+if not token:
+    raise RuntimeError("ATLASSIAN_API_TOKEN environment variable must be set")
 
-instances_env = os.getenv("JIRA_INSTANCES")
-configs: List[Dict[str, Any]] = []
-if instances_env:
-    for inst in [i.strip() for i in instances_env.split(",") if i.strip()]:
-        prefix = inst.upper()
-        token = os.getenv(f"{prefix}_JIRA_API_TOKEN")
-        email = os.getenv(f"{prefix}_JIRA_EMAIL")
-        base_url = os.getenv(f"{prefix}_JIRA_BASE_URL")
-        assignees_env = os.getenv(f"{prefix}_JIRA_ASSIGNEES")
-        assignees = [a.strip() for a in assignees_env.split(",")] if assignees_env else [email]
-
-        missing = [v for v, val in [
-            (f"{prefix}_JIRA_API_TOKEN", token),
-            (f"{prefix}_JIRA_EMAIL", email),
-            (f"{prefix}_JIRA_BASE_URL", base_url),
-        ] if not val]
-        if missing:
-            raise RuntimeError(f"Missing env vars for {inst}: {', '.join(missing)}")
-
-        configs.append(
-            {
-                "name": inst,
-                "email": email,
-                "token": token,
-                "base_url": base_url,
-                "assignees": assignees,
-            }
-        )
-else:
-    # single-instance fallback
-    token = os.getenv("JIRA_API_TOKEN")
-    email = os.getenv("JIRA_EMAIL")
-    base_url = os.getenv("JIRA_BASE_URL")
-    for var, val in [("JIRA_API_TOKEN", token), ("JIRA_EMAIL", email), ("JIRA_BASE_URL", base_url)]:
-        if not val:
-            raise RuntimeError(f"{var} environment variable is not set")
-    configs.append({"name": "default", "email": email, "token": token, "base_url": base_url})
+# Hard-code Jira instances
+configs: List[Dict[str, Any]] = [
+    {"name": "palliativa", "email": email, "token": token, "base_url": "https://palliativa.atlassian.net"},
+    {"name": "jjrsoftware", "email": email, "token": token, "base_url": "https://jjrsoftware.atlassian.net"},
+]
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -395,8 +368,8 @@ async def deployments() -> list[Dict[str, Any]]:
     Latest deployment per environment for configured repos.
     """
     email, token = _bitbucket_auth()
-    repos_env = os.getenv("BITBUCKET_REPOS", "palliativa/frontend,palliativa/backend")
-    repos = [r.strip() for r in repos_env.split(",") if r.strip()]
+    # Hard-code Bitbucket repos to inspect for deployments
+    repos = ["palliativa/frontend", "palliativa/backend"]
     out: List[Dict[str, Any]] = []
 
     auth = (email, token)
@@ -530,8 +503,8 @@ async def repo_list() -> List[Dict[str, Any]]:
         environments  – list of environment names for deployments in that repo
     """
     email, token = _bitbucket_auth()
-    repos_env = os.getenv("BITBUCKET_REPOS", "palliativa/frontend,palliativa/backend")
-    repos_raw = [r.strip() for r in repos_env.split(",") if r.strip()]
+    # Hard-code Bitbucket repos to inspect for deployments
+    repos_raw = ["palliativa/frontend", "palliativa/backend"]
 
     out: List[Dict[str, Any]] = []
     auth = (email, token)
