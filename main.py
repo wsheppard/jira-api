@@ -32,6 +32,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 # ---------------------------------------------------------------------------
 # Jira configuration
@@ -84,6 +85,7 @@ else:
 
 
 app = FastAPI(title="Jira / Bitbucket Bridge")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # Static UI
