@@ -4,12 +4,11 @@ Super simple FastAPI bridge for various Jira things.
 
 ## Setup
 
-Create a `.env` file in the project root with your Jira Cloud credentials. For a single instance:
+Copy `.env.example` to `.env` in the project root and fill in your Jira Cloud credentials. For a single instance:
 
-```ini
-JIRA_API_TOKEN="your_api_token"
-JIRA_EMAIL="your_jira_account_email"
-JIRA_BASE_URL="https://your-domain.atlassian.net"
+```bash
+cp .env.example .env
+# edit .env to add your credentials
 ```
 
 If you have multiple Jira instances, prefix each set of creds and list their names in `JIRA_INSTANCES`:

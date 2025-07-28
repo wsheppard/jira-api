@@ -118,7 +118,7 @@
         <tr>
           <th scope="col">Repository</th>
           <th scope="col">Environment</th>
-          <th scope="col">Name</th>
+          <th scope="col">Build</th>
           <th scope="col">Result</th>
           <th scope="col">Commit</th>
           <th scope="col">Tag</th>
@@ -131,7 +131,7 @@
           <tr>
             <td x-text="d.repository"></td>
             <td x-text="d.environment"></td>
-            <td x-text="d.name || d.environment"></td>
+            <td x-text="d.build !== undefined ? d.build : '-' "></td>
             <td>
               <span :class="badgeClass(d.result)" x-text="d.result"></span>
             </td>
