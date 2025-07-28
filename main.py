@@ -34,6 +34,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from atlassian import Bitbucket
+
 import logging
 import asyncio
 import json
@@ -220,6 +222,13 @@ def _bitbucket_auth() -> tuple[str, str]:
     return email_bb, token_bb
 
 
+def _bb_client(email: str, token: str) -> Bitbucket:
+    """Instantiate atlassian-python-api Bitbucket client for Cloud."""
+    return Bitbucket(
+        url="https://api.bitbucket.org", username=email, password=token, cloud=True
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bitbucket endpoints
 # ---------------------------------------------------------------------------
@@ -269,11 +278,20 @@ async def fetch_all_deployments(
     """
     Fetch all deployments for the given repository by paging through results.
     """
-    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/"
-    resp = await client.get(url, auth=auth, params={"pagelen": 50})
-    if resp.status_code != 200:
-        return []
-    return resp.json().get("values", [])
+    base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments"
+    deployments: List[Dict[str, Any]] = []
+    next_url: str | None = f"{base_url}?pagelen=50"
+    while next_url:
+        resp = await client.get(next_url, auth=auth)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        values = data.get("values", [])
+        if not values:
+            break
+        deployments.extend(values)
+        next_url = data.get("next")
+    return deployments
 
 async def fetch_deployment_statuses(
     client: httpx.AsyncClient,
@@ -369,45 +387,39 @@ async def deployments() -> list[Dict[str, Any]]:
     repos = ["palliativa/frontend", "palliativa/backend"]
     out: List[Dict[str, Any]] = []
 
-    auth = (email, token)
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient() as comm_client:
+        auth = (email, token)
         for repo_full in repos:
             if "/" not in repo_full:
                 continue
             workspace, slug = repo_full.split("/", 1)
-            # Retrieve all deployments for this repo and filter per environment
-            all_deps = await fetch_all_deployments(client, auth, workspace, slug)
+
+            # Retrieve all deployments for this repo via Bitbucket API
+            all_deps = await fetch_all_deployments(comm_client, auth, workspace, slug)
             if not all_deps:
                 continue
 
-            # Fetch statuses for each deployment concurrently
-            status_tasks = [
-                asyncio.create_task(
-                    fetch_deployment_statuses(client, auth, workspace, slug, d.get("uuid") or "")
-                )
-                for d in all_deps
-                if d.get("uuid")
-            ]
-            status_results = await asyncio.gather(*status_tasks, return_exceptions=True)
-
-            # Determine the latest successful deployment per environment
+            # Determine latest successful deployment per environment
             latest_by_env: Dict[str, Dict[str, Any]] = {}
             latest_time: Dict[str, str] = {}
-            for dep, statuses in zip(all_deps, status_results):
-                if isinstance(statuses, Exception) or not statuses:
+            for dep in all_deps:
+                # Fetch statuses for the deployment
+                statuses = await fetch_deployment_statuses(
+                    comm_client, auth, workspace, slug, dep.get("uuid")
+                )
+                if not statuses:
                     continue
-                # pick the most recent successful status
-                successful = [s for s in statuses if (s.get("state") or "").upper() == "SUCCESSFUL"]
+                # Pick most recent successful status
+                successful = [
+                    s for s in statuses if (s.get("state") or "").upper() == "SUCCESSFUL"
+                ]
                 if not successful:
                     continue
                 successful.sort(key=lambda s: s.get("created_on") or "", reverse=True)
                 st = successful[0]
+
                 env_obj = dep.get("environment") or {}
-                env_name = (
-                    env_obj.get("name")
-                    or env_obj.get("environment_type")
-                    or ""
-                )
+                env_name = env_obj.get("name") or env_obj.get("environment_type") or ""
                 st_time = st.get("created_on") or ""
                 if env_name and (env_name not in latest_time or st_time > latest_time[env_name]):
                     latest_time[env_name] = st_time
@@ -415,37 +427,24 @@ async def deployments() -> list[Dict[str, Any]]:
 
             # Enrich and build output rows
             for env_name, ld in latest_by_env.items():
-                # dump raw deployment for debugging
-                logger.debug(
-                    "Deployment payload for %s/%s env %s:\n%s",
-                    workspace,
-                    slug,
-                    env_name,
-                    json.dumps(ld, indent=2),
-                )
                 commit_hash = _commit_hash_from_deployment(ld)
-                logger.debug(
-                    "Extracted commit hash for %s/%s env %s: %s",
-                    workspace,
-                    slug,
-                    env_name,
-                    commit_hash,
-                )
                 commit_data: Dict[str, Any] = {}
                 if commit_hash:
-                    cache = await enrich_commits(client, auth, workspace, slug, [commit_hash])
+                    cache = await enrich_commits(comm_client, (email, token), workspace, slug, [commit_hash])
                     commit_data = cache.get(commit_hash, {})
-                out.append({
-                    "repository": slug,
-                    "environment": env_name,
-                    "build": ld.get("deployment_number"),
-                    "commit": commit_hash,
-                    "tag": commit_data.get("tag"),
-                    "update_time": commit_data.get("date") or latest_time.get(env_name),
-                    "result": st.get("state") or None,
-                    "link": ld.get("links", {}).get("html", {}).get("href"),
-                    "raw": ld,
-                })
+                out.append(
+                    {
+                        "repository": slug,
+                        "environment": env_name,
+                        "build": ld.get("deployment_number"),
+                        "commit": commit_hash,
+                        "tag": commit_data.get("tag"),
+                        "update_time": commit_data.get("date") or latest_time.get(env_name),
+                        "result": st.get("state") or None,
+                        "link": ld.get("links", {}).get("html", {}).get("href"),
+                        "raw": ld,
+                    }
+                )
 
     out.sort(key=lambda x: (x["repository"], x["environment"]))
     return out
