@@ -4,11 +4,11 @@ Super simple FastAPI bridge for various Jira things.
 
 ## Setup
 
-Copy `.env.example` to `.env` in the project root and fill in your Atlassian credentials and configuration:
+Copy `.env.example` to `.env` in the project root and fill in only the API tokens:
 
 ```bash
 cp .env.example .env
-# edit .env to set ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN, JIRA_BASE_URL, BITBUCKET_REPOS
+# edit .env to set JIRA_API_TOKEN and BITBUCKET_API_TOKEN
 ```
 
 If you have multiple Jira instances, prefix each set of creds and list their names in `JIRA_INSTANCES`:

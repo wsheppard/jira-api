@@ -54,15 +54,19 @@ logger = logging.getLogger(__name__)
 
 # Load .env and require a single Atlassian API token for all requests
 load_dotenv()
+# Hard-code Atlassian email and require separate API tokens for Jira and Bitbucket
 email = "will@jjrsoftware.co.uk"
-token = os.getenv("ATLASSIAN_API_TOKEN")
-if not token:
-    raise RuntimeError("ATLASSIAN_API_TOKEN environment variable must be set")
+jira_token = os.getenv("JIRA_API_TOKEN")
+if not jira_token:
+    raise RuntimeError("JIRA_API_TOKEN environment variable must be set")
+bb_token = os.getenv("BITBUCKET_API_TOKEN")
+if not bb_token:
+    raise RuntimeError("BITBUCKET_API_TOKEN environment variable must be set")
 
 # Hard-code Jira instances
 configs: List[Dict[str, Any]] = [
-    {"name": "palliativa", "email": email, "token": token, "base_url": "https://palliativa.atlassian.net"},
-    {"name": "jjrsoftware", "email": email, "token": token, "base_url": "https://jjrsoftware.atlassian.net"},
+    {"name": "palliativa", "email": email, "token": jira_token, "base_url": "https://palliativa.atlassian.net"},
+    {"name": "jjrsoftware", "email": email, "token": jira_token, "base_url": "https://jjrsoftware.atlassian.net"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -186,26 +190,24 @@ _bb_checked = False
 
 
 def _bitbucket_auth() -> tuple[str, str]:
-    """Return (email, token) for Bitbucket API; logs connectivity once."""
+    """Return (email, token) for Bitbucket API; uses hard-coded email."""
     global _bb_checked
 
-    email = os.getenv("BITBUCKET_EMAIL") or os.getenv("JIRA_EMAIL")
-    token = os.getenv("BITBUCKET_API_TOKEN") or os.getenv("JIRA_API_TOKEN")
-    if not email or not token:
-        raise HTTPException(status_code=500, detail="Bitbucket credentials missing: BITBUCKET_EMAIL/API_TOKEN or JIRA_EMAIL/API_TOKEN")
+    email_bb = "will@jjrsoftware.co.uk"
+    token_bb = bb_token
+    if not token_bb:
+        raise HTTPException(status_code=500, detail="BITBUCKET_API_TOKEN environment variable missing")
 
     if not _bb_checked:
         async def _check():
             url = "https://api.bitbucket.org/2.0/user"
             async with httpx.AsyncClient() as client:
-                r = await client.get(url, auth=(email, token))
+                r = await client.get(url, auth=(email_bb, token_bb))
             if r.status_code == 200:
                 info = r.json()
                 print(f"[bitbucket] Auth OK – user: {info.get('username')} / {info.get('display_name')}")
             else:
                 print(f"[bitbucket] Auth FAILED – {r.status_code}: {r.text[:120]}")
-
-        import asyncio
 
         try:
             loop = asyncio.get_running_loop()
@@ -215,7 +217,7 @@ def _bitbucket_auth() -> tuple[str, str]:
 
         _bb_checked = True
 
-    return email, token
+    return email_bb, token_bb
 
 
 # ---------------------------------------------------------------------------
@@ -267,16 +269,11 @@ async def fetch_all_deployments(
     """
     Fetch all deployments for the given repository by paging through results.
     """
-    deployments: List[Dict[str, Any]] = []
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{slug}/deployments/"
-    while url:
-        resp = await client.get(url, auth=auth, params={"pagelen": 50})
-        if resp.status_code != 200:
-            break
-        data = resp.json()
-        deployments.extend(data.get("values", []))
-        url = data.get("next")
-    return deployments
+    resp = await client.get(url, auth=auth, params={"pagelen": 50})
+    if resp.status_code != 200:
+        return []
+    return resp.json().get("values", [])
 
 async def fetch_deployment_statuses(
     client: httpx.AsyncClient,
