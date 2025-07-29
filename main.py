@@ -39,6 +39,7 @@ from atlassian import Bitbucket
 import logging
 import asyncio
 import json
+from bbclient import BitbucketClient
 
 # enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
 logging.basicConfig(level=logging.DEBUG)
@@ -378,74 +379,36 @@ async def enrich_commits(client: httpx.AsyncClient, auth: Tuple[str, str], works
     return commit_cache
 
 @app.get("/deployments")
-async def deployments() -> list[Dict[str, Any]]:
+async def deployments() -> List[Dict[str, Any]]:
     """
-    Latest deployment per environment for configured repos.
+    Latest deployment per environment for configured repos,
+    using the bbclient module.
     """
-    email, token = _bitbucket_auth()
-    # Hard-code Bitbucket repos to inspect for deployments
     repos = ["palliativa/frontend", "palliativa/backend"]
     out: List[Dict[str, Any]] = []
-
-    async with httpx.AsyncClient() as comm_client:
-        auth = (email, token)
-        for repo_full in repos:
-            if "/" not in repo_full:
-                continue
-            workspace, slug = repo_full.split("/", 1)
-
-            # Retrieve all deployments for this repo via Bitbucket API
-            all_deps = await fetch_all_deployments(comm_client, auth, workspace, slug)
-            if not all_deps:
-                continue
-
-            # Determine latest successful deployment per environment
-            latest_by_env: Dict[str, Dict[str, Any]] = {}
-            latest_time: Dict[str, str] = {}
-            for dep in all_deps:
-                # Fetch statuses for the deployment
-                statuses = await fetch_deployment_statuses(
-                    comm_client, auth, workspace, slug, dep.get("uuid")
-                )
-                if not statuses:
-                    continue
-                # Pick most recent successful status
-                successful = [
-                    s for s in statuses if (s.get("state") or "").upper() == "SUCCESSFUL"
-                ]
-                if not successful:
-                    continue
-                successful.sort(key=lambda s: s.get("created_on") or "", reverse=True)
-                st = successful[0]
-
-                env_obj = dep.get("environment") or {}
-                env_name = env_obj.get("name") or env_obj.get("environment_type") or ""
-                st_time = st.get("created_on") or ""
-                if env_name and (env_name not in latest_time or st_time > latest_time[env_name]):
-                    latest_time[env_name] = st_time
-                    latest_by_env[env_name] = dep
-
-            # Enrich and build output rows
-            for env_name, ld in latest_by_env.items():
-                commit_hash = _commit_hash_from_deployment(ld)
-                commit_data: Dict[str, Any] = {}
-                if commit_hash:
-                    cache = await enrich_commits(comm_client, (email, token), workspace, slug, [commit_hash])
-                    commit_data = cache.get(commit_hash, {})
+    for repo_full in repos:
+        if "/" not in repo_full:
+            continue
+        workspace, slug = repo_full.split("/", 1)
+        client = BitbucketClient(token=bb_token, workspace=workspace, repo_slug=slug)
+        try:
+            latests = await client.get_latest_successful_per_env()
+            for env_name, info in latests.items():
+                uuid = info.get("uuid")
                 out.append(
                     {
                         "repository": slug,
                         "environment": env_name,
-                        "build": ld.get("deployment_number"),
-                        "commit": commit_hash,
-                        "tag": commit_data.get("tag"),
-                        "update_time": commit_data.get("date") or latest_time.get(env_name),
-                        "result": st.get("state") or None,
-                        "link": ld.get("links", {}).get("html", {}).get("href"),
-                        "raw": ld,
+                        "build": None,
+                        "commit": info.get("commit"),
+                        "tag": None,
+                        "update_time": info.get("created_on"),
+                        "result": "SUCCESSFUL",
+                        "link": f"https://bitbucket.org/{workspace}/{slug}/deployments/{uuid}",
                     }
                 )
-
+        finally:
+            await client.close()
     out.sort(key=lambda x: (x["repository"], x["environment"]))
     return out
 

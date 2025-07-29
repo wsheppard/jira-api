@@ -2,4 +2,4 @@ fastapi
 uvicorn
 python-dotenv
 httpx
-atlassian-python-api
+rich

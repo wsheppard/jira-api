@@ -1,7 +1,38 @@
 import asyncio
 import httpx
-from typing import Dict, List, Any, Optional
+from typing import AsyncGenerator, Dict, List, Any, Optional, TypedDict
+from urllib.parse import urlencode
 
+
+class Environment(TypedDict):
+    """Bitbucket environment object as returned by the API."""
+    type: str
+    uuid: str
+    name: str
+
+class SimpleType(TypedDict):
+    """Generic object with only a 'type' field."""
+    type: str
+
+class PipelineConfigurationSource(TypedDict):
+    source: str
+    uri: str
+
+class Pipeline(TypedDict):
+    type: str
+    uuid: str
+    build_number: int
+    creator: SimpleType
+    repository: SimpleType
+    target: SimpleType
+    trigger: SimpleType
+    state: SimpleType
+    variables: List[SimpleType]
+    created_on: str
+    completed_on: str
+    build_seconds_used: int
+    configuration_sources: List[PipelineConfigurationSource]
+    links: SimpleType
 
 class BitbucketClient:
     BASE_URL = "https://api.bitbucket.org/2.0"
@@ -11,57 +42,120 @@ class BitbucketClient:
         self.workspace = workspace
         self.repo_slug = repo_slug
         self._client = httpx.AsyncClient(
+                auth=("will@jjrsoftware.co.uk", self.token),
             base_url=self.BASE_URL,
-            headers={"Authorization": f"Bearer {self.token}"},
+            # headers={"Authorization": f"Bearer {self.token}"},
             timeout=20
         )
 
     async def close(self):
         await self._client.aclose()
 
-    async def _get_paginated(self, path: str) -> List[Dict[str, Any]]:
-        """Fetch all pages of a paginated Bitbucket endpoint."""
+    async def _get_paginated(
+        self, path: str, max_items: Optional[int] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield items from all pages of a paginated Bitbucket endpoint, up to max_items if set."""
         url = path
-        results = []
+        count = 0
         while url:
             resp = await self._client.get(url)
             resp.raise_for_status()
             data = resp.json()
-            results.extend(data.get("values", []))
+            for item in data.get("values", []):
+                if max_items is not None and count >= max_items:
+                    return
+                yield item
+                count += 1
             url = data.get("next", None)
-        return results
 
-    async def list_environments(self) -> List[Dict[str, Any]]:
+    async def list_environments(self) -> AsyncGenerator[Environment, None]:
+        """Yield each environment in the repository."""
         path = f"/repositories/{self.workspace}/{self.repo_slug}/environments/"
-        return await self._get_paginated(path)
+        async for env in self._get_paginated(path):
+            yield env  # type: ignore
 
-    async def list_deployments(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """List deployments sorted by newest first."""
+    async def get_environment(self, environment_uuid: str) -> Environment:
+        """Retrieve a single environment by UUID."""
+        path = f"/repositories/{self.workspace}/{self.repo_slug}/environments/{environment_uuid}"
+        resp = await self._client.get(path)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def list_deployments(self, limit: int = 10) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield deployments (newest first) in the repository."""
         path = f"/repositories/{self.workspace}/{self.repo_slug}/deployments/?sort=-created_on&pagelen={limit}"
-        return await self._get_paginated(path)
+        async for dep in self._get_paginated(path):
+            yield dep
 
-    async def get_deployment_statuses(self, deployment_uuid: str) -> List[Dict[str, Any]]:
-        path = f"/repositories/{self.workspace}/{self.repo_slug}/deployments/{deployment_uuid}/statuses"
-        return await self._get_paginated(path)
 
-    async def get_latest_successful_per_env(self) -> Dict[str, Dict[str, Any]]:
-        deployments = await self.list_deployments(limit=20)
-        env_latest: Dict[str, Dict[str, Any]] = {}
+    async def get_deployment_statuses(
+        self, deployment_uuid: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield all statuses for a given deployment UUID."""
+        path = (
+            f"/repositories/{self.workspace}/{self.repo_slug}"
+            f"/deployments/{deployment_uuid}/statuses"
+        )
+        async for status in self._get_paginated(path):
+            yield status
 
-        for dep in deployments:
-            env = dep.get("environment", {}).get("name")
-            if not env or env in env_latest:
-                continue
+    async def list_pipelines(
+        self,
+        creator_uuid: Optional[str] = None,
+        target_ref_type: Optional[str] = None,
+        target_ref_name: Optional[str] = None,
+        target_branch: Optional[str] = None,
+        target_commit_hash: Optional[str] = None,
+        target_selector_pattern: Optional[str] = None,
+        target_selector_type: Optional[str] = None,
+        created_on: Optional[str] = None,
+        trigger_type: Optional[str] = None,
+        status: Optional[str] = None,
+        sort: Optional[str] = None,
+        page: Optional[int] = None,
+        pagelen: Optional[int] = None,
+        max_items: Optional[int] = None,
+    ) -> AsyncGenerator[Pipeline, None]:
+        """
+        Yield pipelines in the repository (one at a time), supporting filters, sorting, and max_items.
 
-            statuses = await self.get_deployment_statuses(dep["uuid"])
-            if any(s["state"] == "SUCCESSFUL" for s in statuses):
-                env_latest[env] = {
-                    "uuid": dep["uuid"],
-                    "commit": dep.get("commit", {}).get("hash"),
-                    "created_on": dep["created_on"]
-                }
+        Mirrors Bitbucket API query parameters: creator.uuid, target.ref_*,
+        created_on, trigger_type, status, sort, page, pagelen.
+        """
+        params: Dict[str, Any] = {}
+        if creator_uuid:
+            params["creator.uuid"] = creator_uuid
+        if target_ref_type:
+            params["target.ref_type"] = target_ref_type
+        if target_ref_name:
+            params["target.ref_name"] = target_ref_name
+        if target_branch:
+            params["target.branch"] = target_branch
+        if target_commit_hash:
+            params["target.commit.hash"] = target_commit_hash
+        if target_selector_pattern:
+            params["target.selector.pattern"] = target_selector_pattern
+        if target_selector_type:
+            params["target.selector.type"] = target_selector_type
+        if created_on:
+            params["created_on"] = created_on
+        if trigger_type:
+            params["trigger_type"] = trigger_type
+        if status:
+            params["status"] = status
+        if sort:
+            params["sort"] = sort
+        if page is not None:
+            params["page"] = page
+        if pagelen is not None:
+            params["pagelen"] = pagelen
 
-        return env_latest
+        path = f"/repositories/{self.workspace}/{self.repo_slug}/pipelines/"
+        if params:
+            path = f"{path}?{urlencode(params)}"
+        async for pipeline in self._get_paginated(path, max_items=max_items):
+            yield pipeline  # type: ignore
+
 
 
 # --- Example usage ---
@@ -78,10 +172,6 @@ async def main():
         for e in envs:
             print(f"- {e['name']}")
 
-        latest = await client.get_latest_successful_per_env()
-        print("\nLatest deployments per environment:")
-        for env, info in latest.items():
-            print(f"{env}: {info}")
     finally:
         await client.close()
 
