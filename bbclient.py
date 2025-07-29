@@ -2,6 +2,8 @@ import asyncio
 import httpx
 from typing import AsyncGenerator, Dict, List, Any, Optional, TypedDict
 from urllib.parse import urlencode
+from rich import print
+from rich.pretty import Pretty
 
 
 class Environment(TypedDict):
@@ -51,6 +53,27 @@ class BitbucketClient:
     async def close(self):
         await self._client.aclose()
 
+    async def _get(self, path: str) -> httpx.Response:
+        """Perform GET and raise HTTPStatusError with full response body on error."""
+        resp = await self._client.get(path)
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            text = resp.text
+            error_json: Any = None
+            try:
+                error_json = resp.json()
+            except Exception:
+                pass
+            print(f"HTTP {resp.status_code} error for GET {resp.url}")
+            print("Response body:")
+            print(Pretty(text))
+            if error_json is not None:
+                print("Error JSON:")
+                print(Pretty(error_json))
+            raise
+        return resp
+
     async def _get_paginated(
         self, path: str, max_items: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -58,9 +81,7 @@ class BitbucketClient:
         url = path
         count = 0
         while url:
-            print(f"URL: [{url}]")
-            resp = await self._client.get(url)
-            resp.raise_for_status()
+            resp = await self._get(url)
             data = resp.json()
             for item in data.get("values", []):
                 if max_items is not None and count >= max_items:
@@ -78,8 +99,7 @@ class BitbucketClient:
     async def get_environment(self, environment_uuid: str) -> Environment:
         """Retrieve a single environment by UUID."""
         path = f"/repositories/{self.workspace}/{self.repo_slug}/environments/{environment_uuid}"
-        resp = await self._client.get(path)
-        resp.raise_for_status()
+        resp = await self._get(path)
         return resp.json()
 
     async def get_pipeline(self, pipeline_uuid: str) -> Pipeline:
@@ -88,14 +108,30 @@ class BitbucketClient:
             f"/repositories/{self.workspace}/{self.repo_slug}"
             f"/pipelines/{pipeline_uuid}"
         )
-        resp = await self._client.get(path)
-        resp.raise_for_status()
+        resp = await self._get(path)
         return resp.json()
 
-    async def list_deployments(self, limit: int = 10) -> AsyncGenerator[Dict[str, Any], None]:
-        """Yield deployments (newest first) in the repository."""
-        path = f"/repositories/{self.workspace}/{self.repo_slug}/deployments/?sort=-created_on&pagelen={limit}"
-        async for dep in self._get_paginated(path):
+    async def list_deployments(
+        self,
+        q: Optional[str] = None,
+        pagelen: Optional[int] = None,
+        max_items: Optional[int] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Yield deployments in the repository with optional q-filter and paging.
+
+        Supports Bitbucket API query parameters: q, pagelen.
+        """
+        params: Dict[str, Any] = {}
+        if q is not None:
+            params["q"] = q
+        if pagelen is not None:
+            params["pagelen"] = pagelen
+
+        path = f"/repositories/{self.workspace}/{self.repo_slug}/deployments/"
+        if params:
+            path = f"{path}?{urlencode(params)}"
+        async for dep in self._get_paginated(path, max_items=max_items):
             yield dep
 
 
@@ -169,6 +205,25 @@ class BitbucketClient:
             path = f"{path}?{urlencode(params)}"
         async for pipeline in self._get_paginated(path, max_items=max_items):
             yield pipeline  # type: ignore
+
+    async def get_latest_pipeline_for_pattern(
+        self,
+        selector_pattern: str,
+        pagelen: int = 10,
+    ) -> Optional[Pipeline]:
+        """
+        Return the most recent pipeline whose target.selector.pattern matches selector_pattern.
+
+        Uses client-side limit of one item (newest first) via max_items=1.
+        """
+        async for pipeline in self.list_pipelines(
+            target_selector_pattern=selector_pattern,
+            sort="-created_on",
+            pagelen=pagelen,
+            max_items=1,
+        ):
+            return pipeline
+        return None
 
 
 
