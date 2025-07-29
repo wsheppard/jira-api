@@ -22,7 +22,7 @@ class PipelineDashboard:
         """
         Return a nested dict mapping repo_slug -> tag-pattern -> list of pipelines.
 
-        Each pipeline entry includes ref_name, completed_on, result, commit hash, and commit link.
+        Each pipeline entry includes uuid, ref_name, completed_on, result, commit hash, commit link, and pipeline link.
         """
         dashboard: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
         for repo_full in self.repo_full_names:
@@ -53,11 +53,13 @@ class PipelineDashboard:
                     commit_hash = commit.get("hash")
                     commit_link = commit.get("links", {}).get("html", {}).get("href")
                     entries.append({
+                        "uuid": pipeline.get("uuid"),
                         "ref_name": ref,
                         "completed_on": completed,
                         "result": result,
                         "commit": commit_hash,
                         "commit_link": commit_link,
+                        "pipeline_link": pipeline.get("links", {}).get("html", {}).get("href"),
                     })
                 repo_data[pattern] = entries
             await client.close()

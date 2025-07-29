@@ -90,7 +90,24 @@ Alpine.data('reposApp', () => ({
 
 Alpine.data('deploymentsApp', () => ({
   deployments: [],
+  async load() {
+    try {
+      const res = await fetch('/deployments')
+      this.deployments = res.ok ? await res.json() : []
+    } catch (err) {
+      console.error('Failed to load deployments:', err)
+    }
+  },
+  init() {
+    console.log("deploymentsApp init()");
+    this.load()
+  }
+}))
+Alpine.data('pipelineDashboardApp', () => ({
+  data: { frontend: {}, backend: {} },
+  categories: [],
   timeAgo(dateString) {
+    if (!dateString) return ''
     const now = new Date()
     const updated = new Date(dateString)
     const diffSec = Math.round((now - updated) / 1000)
@@ -120,18 +137,27 @@ Alpine.data('deploymentsApp', () => ({
         return 'badge bg-info'
     }
   },
+  envDisplay(env) {
+    return env.split('/')[0].toUpperCase();
+  },
   async load() {
     try {
-      const res = await fetch('/deployments')
+      const res = await fetch('/pipeline-dashboard')
       if (res.ok) {
-        this.deployments = await res.json()
+        this.data = await res.json()
+        const repos = Object.keys(this.data)
+        if (repos.length > 0) {
+          this.categories = Object.keys(this.data[repos[0]])
+        }
       } else {
-        const txt = await res.text()
-        console.error('Failed to load deployments:', res.status, txt)
-        this.deployments = []
+        console.error('Failed to load pipeline dashboard:', res.status)
+        this.data = { frontend: {}, backend: {} }
+        this.categories = []
       }
     } catch (err) {
-      console.error('Failed to load deployments:', err)
+      console.error('Failed to load pipeline dashboard:', err)
+      this.data = { frontend: {}, backend: {} }
+      this.categories = []
     }
   },
   init() {

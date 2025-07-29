@@ -85,66 +85,85 @@
     </template>
   </div>
 
-  <!-- Configured Repositories -->
-  <h1 class="mt-5">Repositories</h1>
-<ul x-data="reposApp()" class="list-group mb-5">
-    <template x-for="repo in repos" :key="repo.full">
-      <li class="list-group-item">
-        <div class="d-flex justify-content-between align-items-center">
-          <span x-text="repo.full"></span>
-          <template x-if="repo.link">
-            <a :href="repo.link" target="_blank" class="btn btn-sm btn-primary">Open</a>
+  <!-- Latest Tag per Environment -->
+  <div x-data="pipelineDashboardApp()" class="mb-5">
+    <h1 class="mt-5">Latest Tag per Environment</h1>
+    <div class="table-responsive mb-4">
+      <table class="table table-striped table-sm align-middle">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Environment</th>
+            <th scope="col">Frontend</th>
+            <th scope="col">Backend</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="env in categories" :key="env">
+            <tr>
+              <td x-text="envDisplay(env)"></td>
+              <td>
+                <span x-text="(data.frontend[env] ?? [])[0]?.ref_name || '-'"
+                      ></span>
+                <template x-if="(data.frontend[env] ?? [])[0]?.completed_on">
+                  <small class="text-muted"
+                         x-text="' (' + timeAgo((data.frontend[env] ?? [])[0].completed_on) + ')'"
+                  ></small>
+                </template>
+              </td>
+              <td>
+                <span x-text="(data.backend[env] ?? [])[0]?.ref_name || '-'"
+                      ></span>
+                <template x-if="(data.backend[env] ?? [])[0]?.completed_on">
+                  <small class="text-muted"
+                         x-text="' (' + timeAgo((data.backend[env] ?? [])[0].completed_on) + ')'"
+                  ></small>
+                </template>
+              </td>
+            </tr>
           </template>
-        </div>
-        <template x-if="repo.environments && repo.environments.length">
-          <div class="mt-2">
-            <small class="text-muted">Environments:</small>
-            <ul class="list-inline mb-0">
-              <template x-for="env in repo.environments" :key="env">
-                <li class="list-inline-item badge bg-secondary text-white" x-text="env"></li>
-              </template>
-            </ul>
+        </tbody>
+      </table>
+    </div>
+
+  <!-- Pipeline Dashboard -->
+    <h1 class="mt-5">Pipeline Dashboard</h1>
+    <template x-for="(repoData, repo) in data" :key="repo">
+      <div class="mb-5">
+        <h2 class="mt-4" x-text="repo"></h2>
+        <template x-for="env in categories" :key="env">
+          <div class="mb-4">
+            <h3 x-text="envDisplay(env)"></h3>
+            <div class="table-responsive">
+              <table class="table table-striped table-sm align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Result</th>
+                    <th scope="col">Ref Name</th>
+                    <th scope="col">Commit</th>
+                    <th scope="col">Completed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(run, index) in (repoData[env] ?? [])" :key="run.uuid || index">
+                    <tr>
+                      <td><span :class="badgeClass(run.result)" x-text="run.result"></span></td>
+                      <td x-text="run.ref_name"></td>
+                      <td><a :href="run.commit_link" target="_blank" x-text="run.commit"></a></td>
+                      <td x-text="timeAgo(run.completed_on)"></td>
+                    </tr>
+                  </template>
+                  <template x-if="!(repoData[env] ?? []).length">
+                    <tr>
+                      <td colspan="4">-</td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
           </div>
         </template>
-      </li>
+      </div>
     </template>
-  </ul>
-
-  <!-- Latest Deployments -->
-  <h1 class="mt-5">Latest Deployments</h1>
-  <div x-data="deploymentsApp()" class="table-responsive mb-5">
-    <table class="table table-striped table-sm align-middle">
-      <thead class="table-light">
-        <tr>
-          <th scope="col">Repository</th>
-          <th scope="col">Environment</th>
-          <th scope="col">Build</th>
-          <th scope="col">Result</th>
-          <th scope="col">Commit</th>
-          <th scope="col">Tag</th>
-          <th scope="col">Updated</th>
-          <th scope="col"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <template x-for="d in deployments" :key="d.repository + d.environment">
-          <tr>
-            <td x-text="d.repository"></td>
-            <td x-text="d.environment"></td>
-            <td x-text="d.build !== undefined ? d.build : '-' "></td>
-            <td>
-              <span :class="badgeClass(d.result)" x-text="d.result"></span>
-            </td>
-            <td><code x-text="d.commit ? d.commit.substring(0,7) : '-' "></code></td>
-            <td x-text="d.tag || '-' "></td>
-            <td x-text="timeAgo(d.update_time)"></td>
-            <td>
-              <a :href="d.link" target="_blank" class="btn btn-sm btn-outline-primary" x-show="d.link">Open</a>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
   </div>
 
 </div>
