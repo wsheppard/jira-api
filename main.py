@@ -34,12 +34,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from atlassian import Bitbucket
-
 import logging
 import asyncio
 import json
 from bbclient import BitbucketClient
+from pipeline_dashboard import PipelineDashboard
 
 # enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
 logging.basicConfig(level=logging.DEBUG)
@@ -379,38 +378,27 @@ async def enrich_commits(client: httpx.AsyncClient, auth: Tuple[str, str], works
     return commit_cache
 
 @app.get("/deployments")
-async def deployments() -> List[Dict[str, Any]]:
+async def deployments() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
-    Latest deployment per environment for configured repos,
-    using the bbclient module.
+    Alias for the pipeline-dashboard: latest pipeline runs per tag-category per repo.
     """
     repos = ["palliativa/frontend", "palliativa/backend"]
-    out: List[Dict[str, Any]] = []
-    for repo_full in repos:
-        if "/" not in repo_full:
-            continue
-        workspace, slug = repo_full.split("/", 1)
-        client = BitbucketClient(token=bb_token, workspace=workspace, repo_slug=slug)
-        try:
-            latests = await client.get_latest_successful_per_env()
-            for env_name, info in latests.items():
-                uuid = info.get("uuid")
-                out.append(
-                    {
-                        "repository": slug,
-                        "environment": env_name,
-                        "build": None,
-                        "commit": info.get("commit"),
-                        "tag": None,
-                        "update_time": info.get("created_on"),
-                        "result": "SUCCESSFUL",
-                        "link": f"https://bitbucket.org/{workspace}/{slug}/deployments/{uuid}",
-                    }
-                )
-        finally:
-            await client.close()
-    out.sort(key=lambda x: (x["repository"], x["environment"]))
-    return out
+    categories = ["qa/v*", "staging/v*", "prod/v*"]
+    dashboard = PipelineDashboard(bb_token, repos)
+    return await dashboard.get_dashboard(
+        categories=categories,
+        pagelen=10,
+        max_items=10,
+    )
+
+
+@app.get("/pipeline-dashboard")
+async def pipeline_dashboard() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """Return the latest pipelines per tag-category per configured repositories."""
+    repos = ["palliativa/frontend", "palliativa/backend"]
+    categories = ["qa/v*", "staging/v*", "prod/v*"]
+    dashboard = PipelineDashboard(bb_token, repos)
+    return await dashboard.get_dashboard(categories=categories, pagelen=10, max_items=10)
 
 # Repo list
 @app.get("/bitbucket-repos")
