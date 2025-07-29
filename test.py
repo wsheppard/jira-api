@@ -4,50 +4,58 @@ import os
 
 from rich import print
 from rich.pretty import Pretty
+import json
+from typing import Dict, List, Any
 
-bbc = BitbucketClient(token=os.environ["BITBUCKET_API_TOKEN"], workspace="palliativa",
-                      repo_slug="frontend" )
+workspace = "palliativa"
+token = os.environ["BITBUCKET_API_TOKEN"]
+repos = ["frontend", "backend"]
+clients = [
+    BitbucketClient(token=token, workspace=workspace, repo_slug=repo)
+    for repo in repos
+]
 
 async def amain():
 
-    print( os.environ )
-
-    print("Environments and associated pipeline (per lock):")
-    async for env in bbc.list_environments():
-        print(Pretty(env))
-        pipeline_uuid = (
-            env.get("lock", {})
-               .get("lock_opener", {})
-               .get("pipeline_uuid")
-        )
-        if pipeline_uuid:
-            print(f"  Pipeline for pipeline_uuid={pipeline_uuid}:")
-            pipeline = await bbc.get_pipeline(pipeline_uuid)
-            print(Pretty(pipeline))
-
-    # Demonstrate the latest pipelines for each tag category (qa, staging, prod)
+    # Build structured dashboard data: latest 10 pipelines per tag-category per repo
     categories = ["qa/v*", "staging/v*", "prod/v*"]
-    print("\nLatest pipeline by tag pattern:")
-    for pattern in categories:
-        pipeline = await bbc.get_latest_pipeline_for_pattern(pattern, pagelen=5)
-        print(f"{pattern}: {Pretty(pipeline) if pipeline else 'No pipeline found'}")
+    dashboard: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    for client in clients:
+        repo_data: Dict[str, List[Dict[str, Any]]] = {}
+        for pattern in categories:
+            entries: List[Dict[str, Any]] = []
+            async for pipeline in client.list_pipelines(
+                target_selector_pattern=pattern,
+                sort="-created_on",
+                pagelen=10,
+                max_items=10,
+            ):
+                ref = pipeline.get("target", {}).get("ref_name")
+                completed = pipeline.get("completed_on")
+                state = pipeline.get("state", {}) or {}
+                result = None
+                if isinstance(state, dict):
+                    result = (
+                        state.get("result", {}).get("name")
+                        or state.get("name")
+                        or state.get("type")
+                    )
+                # include commit details and a link to the commit in the UI
+                commit = pipeline.get("target", {}).get("commit", {})
+                commit_hash = commit.get("hash")
+                commit_html = commit.get("links", {}).get("html", {}).get("href")
+                entries.append({
+                    "ref_name": ref,
+                    "completed_on": completed,
+                    "result": result,
+                    "commit": commit_hash,
+                    "commit_link": commit_html,
+                })
+            repo_data[pattern] = entries
+        dashboard[client.repo_slug] = repo_data
 
-    # Discover which environment is locked to each of those latest pipelines
-    print("\nEnvironment lock state for latest pipelines:")
-    for pattern in categories:
-        pipeline = await bbc.get_latest_pipeline_for_pattern(pattern, pagelen=5)
-        if not pipeline:
-            print(f"{pattern}: no pipeline found → env N/A")
-            continue
-        locked_env = None
-        async for env in bbc.list_environments():
-            if env.get("lock", {}).get("lock_opener", {}).get("pipeline_uuid") == pipeline["uuid"]:
-                locked_env = env
-                break
-        if locked_env:
-            print(f"{pattern}: deployed to environment {Pretty(locked_env)}")
-        else:
-            print(f"{pattern}: pipeline {pipeline['uuid']} not locked in any environment")
+    # Output JSON for dashboard consumption
+    print(json.dumps(dashboard, indent=2))
 
 
 if __name__ == "__main__":
