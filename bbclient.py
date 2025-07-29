@@ -58,6 +58,7 @@ class BitbucketClient:
         url = path
         count = 0
         while url:
+            print(f"URL: [{url}]")
             resp = await self._client.get(url)
             resp.raise_for_status()
             data = resp.json()
@@ -77,6 +78,16 @@ class BitbucketClient:
     async def get_environment(self, environment_uuid: str) -> Environment:
         """Retrieve a single environment by UUID."""
         path = f"/repositories/{self.workspace}/{self.repo_slug}/environments/{environment_uuid}"
+        resp = await self._client.get(path)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_pipeline(self, pipeline_uuid: str) -> Pipeline:
+        """Retrieve a single pipeline by UUID."""
+        path = (
+            f"/repositories/{self.workspace}/{self.repo_slug}"
+            f"/pipelines/{pipeline_uuid}"
+        )
         resp = await self._client.get(path)
         resp.raise_for_status()
         return resp.json()
@@ -101,6 +112,7 @@ class BitbucketClient:
 
     async def list_pipelines(
         self,
+        pipeline_uuid: Optional[str] = None,
         creator_uuid: Optional[str] = None,
         target_ref_type: Optional[str] = None,
         target_ref_name: Optional[str] = None,
@@ -117,12 +129,14 @@ class BitbucketClient:
         max_items: Optional[int] = None,
     ) -> AsyncGenerator[Pipeline, None]:
         """
-        Yield pipelines in the repository (one at a time), supporting filters, sorting, and max_items.
+        Yield pipelines in the repository (one at a time), supporting filters, sorting, max_items, and uuid filtering.
 
-        Mirrors Bitbucket API query parameters: creator.uuid, target.ref_*,
+        Mirrors Bitbucket API query parameters: uuid, creator.uuid, target.ref_*,
         created_on, trigger_type, status, sort, page, pagelen.
         """
         params: Dict[str, Any] = {}
+        if pipeline_uuid:
+            params["uuid"] = pipeline_uuid
         if creator_uuid:
             params["creator.uuid"] = creator_uuid
         if target_ref_type:

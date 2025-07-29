@@ -12,14 +12,18 @@ async def amain():
 
     print( os.environ )
 
-    print("Environments:")
+    print("Environments and associated pipeline (per lock):")
     async for env in bbc.list_environments():
         print(Pretty(env))
-
-    # List pipelines for this repo (newest first, top 5)
-    print("\nPipelines (newest first, top 5):")
-    async for pipeline in bbc.list_pipelines(sort="-created_on", pagelen=5, max_items=5):
-        print(Pretty(pipeline))
+        pipeline_uuid = (
+            env.get("lock", {})
+               .get("lock_opener", {})
+               .get("pipeline_uuid")
+        )
+        if pipeline_uuid:
+            print(f"  Pipeline for pipeline_uuid={pipeline_uuid}:")
+            pipeline = await bbc.get_pipeline(pipeline_uuid)
+            print(Pretty(pipeline))
 
 
 if __name__ == "__main__":
