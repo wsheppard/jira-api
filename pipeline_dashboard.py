@@ -59,7 +59,10 @@ class PipelineDashboard:
                         "result": result,
                         "commit": commit_hash,
                         "commit_link": commit_link,
-                        "pipeline_link": pipeline.get("links", {}).get("html", {}).get("href"),
+                        "pipeline_link": (
+                            pipeline.get("links", {}).get("html", {}).get("href")
+                            or pipeline.get("links", {}).get("self", {}).get("href")
+                        ),
                     })
                 repo_data[pattern] = entries
             await client.close()

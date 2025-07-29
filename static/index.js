@@ -36,7 +36,7 @@ Alpine.data('ticketsApp', () => ({
   },
   init() {
     this.load()
-    setInterval(() => this.load(), 10000)
+    setInterval(() => this.load(), 60000)
   }
 }))
 
@@ -68,7 +68,7 @@ Alpine.data('dueApp', () => ({
   },
   init() {
     this.load()
-    setInterval(() => this.load(), 10000)
+    setInterval(() => this.load(), 60000)
   }
 }))
 
@@ -162,7 +162,7 @@ Alpine.data('pipelineDashboardApp', () => ({
   },
   init() {
     this.load()
-    setInterval(() => this.load(), 30000)
+    setInterval(() => this.load(), 60000)
   }
 }))
 

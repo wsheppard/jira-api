@@ -25,6 +25,21 @@
       font-weight: 500;
       width: 100%;
     }
+
+    /* Pipeline ref_name links styling */
+    .ref-link {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 8px;
+      background-color: #eef;
+      border-radius: 3px;
+      color: #0366d6;
+      text-decoration: none;
+      font-size: 0.875rem;
+    }
+    .ref-link:hover {
+      background-color: #dde;
+    }
   </style>
   <script type="module" src="/static/index.js"></script>
 </head>
@@ -147,7 +162,14 @@
                   <template x-for="(run, index) in (repoData[env] ?? [])" :key="run.uuid || index">
                     <tr>
                       <td><span :class="badgeClass(run.result)" x-text="run.result"></span></td>
-                      <td x-text="run.ref_name"></td>
+                      <td>
+                        <a
+                          :href="run.pipeline_link"
+                          class="ref-link"
+                          target="_blank"
+                          x-text="run.ref_name"
+                        ></a>
+                      </td>
                       <td><a :href="run.commit_link" target="_blank" x-text="run.commit"></a></td>
                       <td x-text="timeAgo(run.completed_on)"></td>
                     </tr>
