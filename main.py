@@ -49,6 +49,8 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 # module logger
 logger = logging.getLogger(__name__)
 
+print("--- JIRA-API: Application starting up ---")
+
 # ---------------------------------------------------------------------------
 # Jira configuration
 # ---------------------------------------------------------------------------
@@ -100,39 +102,35 @@ async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
 
     async with httpx.AsyncClient() as client:
-
-
         for cfg in configs:
             jql = 'status = "In Progress"'
+            json_data = {"jql": jql, "fields": fields}
+            search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+            resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, json=json_data)
 
-            search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search"
-            try:
-                resp = await client.get(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Jira API request failed for instance '{cfg['name']}' with JQL '{jql}': {e}")
-                logger.debug(f"Jira response: {resp.text}")
-                # Re-raise as HTTPException to maintain original API behavior
-                raise HTTPException(status_code=resp.status_code, detail=f"Jira API error for instance '{cfg['name']}': {resp.text}") from e
-
+            if resp.status_code != 200:
+                print(f"--- JIRA ERROR (in-progress) ---")
+                print(f"Response body:\n{resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
             for issue in resp.json().get("issues", []):
-                fields = issue.get("fields", {})
-                assignee = fields.get("assignee") or {}
+                issue_fields = issue.get("fields", {})
+                assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
 
                 flattened.append(
                     {
                         "instance": cfg["name"],
                         "ticket": issue.get("key"),
-                        "project": fields.get("project", {}).get("key"),
+                        "project": issue_fields.get("project", {}).get("key"),
                         "assignee": assignee.get("displayName"),
                         "avatarUrl": avatar,
-                        "updated": fields.get("updated"),
-                        "dueDate": fields.get("duedate"),
-                        "title": fields.get("summary"),
+                        "updated": issue_fields.get("updated"),
+                        "dueDate": issue_fields.get("duedate"),
+                        "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
                     }
                 )
@@ -146,40 +144,39 @@ async def open_issues_by_due():
     """Open (not-done) Jira issues sorted by due date (overdue first)."""
     aggregated: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
             jql = "statusCategory != Done"
-            url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search"
-            try:
-                resp = await client.get(url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"Jira API request failed for instance '{cfg['name']}' with JQL '{jql}': {e}")
-                logger.debug(f"Jira response: {resp.text}")
-                # Re-raise as HTTPException to maintain original API behavior
-                raise HTTPException(status_code=resp.status_code, detail=f"Jira API error for instance '{cfg['name']}': {resp.text}") from e
+            json_data = {"jql": jql, "fields": fields}
+            url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+            resp = await client.post(url, auth=(cfg["email"], cfg["token"]), headers=headers, json=json_data)
 
+            if resp.status_code != 200:
+                print(f"--- JIRA ERROR (open-issues-by-due) ---")
+                print(f"Response body:\n{resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
             for issue in resp.json().get("issues", []):
-                fields = issue.get("fields", {})
-                due = fields.get("duedate")
+                issue_fields = issue.get("fields", {})
+                due = issue_fields.get("duedate")
                 if not due:
                     continue  # skip issues without due-date
 
-                assignee = fields.get("assignee") or {}
+                assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
 
                 aggregated.append(
                     {
                         "instance": cfg["name"],
                         "ticket": issue.get("key"),
-                        "project": fields.get("project", {}).get("key"),
+                        "project": issue_fields.get("project", {}).get("key"),
                         "assignee": assignee.get("displayName"),
                         "avatarUrl": avatar,
-                        "updated": fields.get("updated"),
+                        "updated": issue_fields.get("updated"),
                         "dueDate": due,
-                        "title": fields.get("summary"),
+                        "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
                     }
                 )
@@ -215,6 +212,7 @@ async def bitbucket_test():
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     data = resp.json()
     return {"username": data.get("username"), "display_name": data.get("display_name")}
+
 
 
 @app.get("/bitbucket-commits")
