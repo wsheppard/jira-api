@@ -79,13 +79,7 @@ configs: List[Dict[str, Any]] = [
 
 
 app = FastAPI(title="Jira / Bitbucket Bridge")
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
-# Static UI
-@app.get("/", include_in_schema=False)
-async def serve_ui():
-    return FileResponse("static/index.html")
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +103,8 @@ async def in_progress():
             jql = 'status = "In Progress"'
             json_data = {"jql": jql, "fields": fields}
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
-            resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, json=json_data)
+            resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
+                                     headers=headers, json=json_data)
 
             if resp.status_code != 200:
                 print(f"--- JIRA ERROR (in-progress) ---")
@@ -151,7 +146,8 @@ async def open_issues_by_due():
             jql = "statusCategory != Done"
             json_data = {"jql": jql, "fields": fields}
             url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
-            resp = await client.post(url, auth=(cfg["email"], cfg["token"]), headers=headers, json=json_data)
+            resp = await client.post(url, auth=(cfg["email"], cfg["token"]),
+                                     headers=headers, json=json_data)
 
             if resp.status_code != 200:
                 print(f"--- JIRA ERROR (open-issues-by-due) ---")
@@ -287,7 +283,6 @@ async def fetch_environments(client: httpx.AsyncClient, auth: Tuple[str, str], w
         return []
     data = resp.json()
     return data.get("values", [])
-
 
 
 
@@ -447,3 +442,5 @@ async def repo_list() -> List[Dict[str, Any]]:
                 }
             )
     return out
+
+app.mount("/", StaticFiles(directory="frontend/build", html=True), name="static")
