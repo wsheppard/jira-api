@@ -117,20 +117,18 @@
             <tr>
               <td x-text="envDisplay(env)"></td>
               <td>
-                <span x-text="(data.frontend[env] ?? [])[0]?.ref_name || '-'"
-                      ></span>
-                <template x-if="(data.frontend[env] ?? [])[0]?.completed_on">
+                <span x-text="(latestSuccessful('frontend', env) || {}).ref_name || '-'"></span>
+                <template x-if="latestSuccessful('frontend', env) && latestSuccessful('frontend', env).completed_on">
                   <small class="text-muted"
-                         x-text="' (' + timeAgo((data.frontend[env] ?? [])[0].completed_on) + ')'"
+                         x-text="' (' + timeAgo(latestSuccessful('frontend', env).completed_on) + ')'"
                   ></small>
                 </template>
               </td>
               <td>
-                <span x-text="(data.backend[env] ?? [])[0]?.ref_name || '-'"
-                      ></span>
-                <template x-if="(data.backend[env] ?? [])[0]?.completed_on">
+                <span x-text="(latestSuccessful('backend', env) || {}).ref_name || '-'"></span>
+                <template x-if="latestSuccessful('backend', env) && latestSuccessful('backend', env).completed_on">
                   <small class="text-muted"
-                         x-text="' (' + timeAgo((data.backend[env] ?? [])[0].completed_on) + ')'"
+                         x-text="' (' + timeAgo(latestSuccessful('backend', env).completed_on) + ')'"
                   ></small>
                 </template>
               </td>

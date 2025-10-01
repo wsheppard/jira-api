@@ -140,6 +140,16 @@ Alpine.data('pipelineDashboardApp', () => ({
   envDisplay(env) {
     return env.split('/')[0].toUpperCase();
   },
+  latestSuccessful(repo, env) {
+    const runs = (this.data[repo]?.[env] ?? [])
+    for (const run of runs) {
+      const res = (run.result || '').toUpperCase()
+      if (res === 'SUCCESSFUL' || res === 'COMPLETED') {
+        return run
+      }
+    }
+    return null
+  },
   async load() {
     try {
       const res = await fetch('/pipeline-dashboard')

@@ -108,10 +108,15 @@ async def in_progress():
             jql = 'status = "In Progress"'
 
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search"
-            resp = await client.get(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
+            try:
+                resp = await client.get(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Jira API request failed for instance '{cfg['name']}' with JQL '{jql}': {e}")
+                logger.debug(f"Jira response: {resp.text}")
+                # Re-raise as HTTPException to maintain original API behavior
+                raise HTTPException(status_code=resp.status_code, detail=f"Jira API error for instance '{cfg['name']}': {resp.text}") from e
 
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail=f"{cfg['name']}: {resp.text}")
 
             for issue in resp.json().get("issues", []):
                 fields = issue.get("fields", {})
@@ -146,9 +151,15 @@ async def open_issues_by_due():
         for cfg in configs:
             jql = "statusCategory != Done"
             url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search"
-            resp = await client.get(url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail=f"{cfg['name']}: {resp.text}")
+            try:
+                resp = await client.get(url, auth=(cfg["email"], cfg["token"]), headers=headers, params={"jql": jql})
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Jira API request failed for instance '{cfg['name']}' with JQL '{jql}': {e}")
+                logger.debug(f"Jira response: {resp.text}")
+                # Re-raise as HTTPException to maintain original API behavior
+                raise HTTPException(status_code=resp.status_code, detail=f"Jira API error for instance '{cfg['name']}': {resp.text}") from e
+
 
             for issue in resp.json().get("issues", []):
                 fields = issue.get("fields", {})
@@ -188,45 +199,6 @@ async def open_issues_by_due():
 # ---------------------------------------------------------------------------
 
 
-_bb_checked = False
-
-
-def _bitbucket_auth() -> tuple[str, str]:
-    """Return (email, token) for Bitbucket API; uses hard-coded email."""
-    global _bb_checked
-
-    email_bb = "will@jjrsoftware.co.uk"
-    token_bb = bb_token
-    if not token_bb:
-        raise HTTPException(status_code=500, detail="BITBUCKET_API_TOKEN environment variable missing")
-
-    if not _bb_checked:
-        async def _check():
-            url = "https://api.bitbucket.org/2.0/user"
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, auth=(email_bb, token_bb))
-            if r.status_code == 200:
-                info = r.json()
-                print(f"[bitbucket] Auth OK – user: {info.get('username')} / {info.get('display_name')}")
-            else:
-                print(f"[bitbucket] Auth FAILED – {r.status_code}: {r.text[:120]}")
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_check())
-        except RuntimeError:
-            asyncio.run(_check())
-
-        _bb_checked = True
-
-    return email_bb, token_bb
-
-
-def _bb_client(email: str, token: str) -> Bitbucket:
-    """Instantiate atlassian-python-api Bitbucket client for Cloud."""
-    return Bitbucket(
-        url="https://api.bitbucket.org", username=email, password=token, cloud=True
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +209,8 @@ def _bb_client(email: str, token: str) -> Bitbucket:
 @app.get("/bitbucket-test")
 async def bitbucket_test():
     """Return minimal user info to confirm Bitbucket credentials work."""
-    email, token = _bitbucket_auth()
     async with httpx.AsyncClient() as client:
-        resp = await client.get("https://api.bitbucket.org/2.0/user", auth=(email, token))
+        resp = await client.get("https://api.bitbucket.org/2.0/user", auth=(email, bb_token))
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     data = resp.json()
@@ -248,10 +219,9 @@ async def bitbucket_test():
 
 @app.get("/bitbucket-commits")
 async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
-    email, token = _bitbucket_auth()
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/commits"
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, auth=(email, token), params={"pagelen": limit})
+        resp = await client.get(url, auth=(email, bb_token), params={"pagelen": limit})
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
@@ -404,14 +374,13 @@ async def pipeline_dashboard() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
 @app.get("/bitbucket-repos")
 async def bitbucket_repos(workspace: str):
     """List repos in a Bitbucket workspace."""
-    email, token = _bitbucket_auth()
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}"
     repos: List[Dict[str, Any]] = []
 
     async with httpx.AsyncClient() as client:
         next_url = url
         while next_url:
-            resp = await client.get(next_url, auth=(email, token), params={"pagelen": 50})
+            resp = await client.get(next_url, auth=(email, bb_token), params={"pagelen": 50})
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
             data = resp.json()
@@ -449,12 +418,11 @@ async def repo_list() -> List[Dict[str, Any]]:
         link          – public Bitbucket URL if workspace was included
         environments  – list of environment names for deployments in that repo
     """
-    email, token = _bitbucket_auth()
     # Hard-code Bitbucket repos to inspect for deployments
     repos_raw = ["palliativa/frontend", "palliativa/backend"]
 
     out: List[Dict[str, Any]] = []
-    auth = (email, token)
+    auth = (email, bb_token)
     async with httpx.AsyncClient() as client:
         for repo in repos_raw:
             if "/" in repo:
