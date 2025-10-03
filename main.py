@@ -187,6 +187,48 @@ async def open_issues_by_due():
     return aggregated
 
 
+@app.get("/backlog")
+async def backlog():
+    """Aggregate Jira issues with status *To Do* across instances."""
+    flattened: List[Dict[str, Any]] = []
+    headers = {"Content-Type": "application/json"}
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
+
+    async with httpx.AsyncClient() as client:
+        for cfg in configs:
+            jql = 'status = "To Do" ORDER BY updated ASC'
+            json_data = {"jql": jql, "fields": fields, "maxResults": 10}
+            search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+            resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
+                                     headers=headers, json=json_data)
+
+            if resp.status_code != 200:
+                print(f"--- JIRA ERROR (backlog) ---")
+                print(f"Response body:\n{resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+            for issue in resp.json().get("issues", []):
+                issue_fields = issue.get("fields", {})
+                assignee = issue_fields.get("assignee") or {}
+                avatar = (assignee.get("avatarUrls") or {}).get("32x32")
+
+                flattened.append(
+                    {
+                        "instance": cfg["name"],
+                        "ticket": issue.get("key"),
+                        "project": issue_fields.get("project", {}).get("key"),
+                        "assignee": assignee.get("displayName"),
+                        "avatarUrl": avatar,
+                        "updated": issue_fields.get("updated"),
+                        "dueDate": issue_fields.get("duedate"),
+                        "title": issue_fields.get("summary"),
+                        "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
+                    }
+                )
+
+    return flattened
+
+
 # ---------------------------------------------------------------------------
 # Bitbucket helpers
 # ---------------------------------------------------------------------------
@@ -443,4 +485,4 @@ async def repo_list() -> List[Dict[str, Any]]:
             )
     return out
 
-app.mount("/", StaticFiles(directory="frontend/build", html=True), name="static")
+app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")

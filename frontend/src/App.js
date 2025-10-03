@@ -6,6 +6,7 @@ import './App.css';
 function App() {
   const [openTickets, setOpenTickets] = useState([]);
   const [inProgressTickets, setInProgressTickets] = useState([]);
+  const [backlogTickets, setBacklogTickets] = useState([]);
   const [pipelineData, setPipelineData] = useState({ frontend: {}, backend: {} });
   const [pipelineCategories, setPipelineCategories] = useState([]);
 
@@ -19,6 +20,11 @@ function App() {
       .then(res => res.json())
       .then(data => setInProgressTickets(data))
       .catch(err => console.error('Failed to load in-progress tickets:', err));
+
+    fetch('/backlog')
+      .then(res => res.json())
+      .then(data => setBacklogTickets(data))
+      .catch(err => console.error('Failed to load backlog tickets:', err));
 
     fetch('/pipeline-dashboard')
       .then(res => res.json())
@@ -38,6 +44,8 @@ function App() {
       <TicketsList tickets={openTickets} />
       <h1>In Progress Tickets</h1>
       <TicketsList tickets={inProgressTickets} />
+      <h1>Backlog</h1>
+      <TicketsList tickets={backlogTickets} />
       <h1 className="mt-5">Latest Tag per Environment</h1>
       <h1 className="mt-5">Pipeline Dashboard</h1>
       <PipelineDashboard data={pipelineData} categories={pipelineCategories} />

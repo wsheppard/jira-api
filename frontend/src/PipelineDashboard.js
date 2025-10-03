@@ -109,7 +109,20 @@ function PipelineDashboard({ data, categories }) {
                   <tbody>
                     {(data[repo][env] || []).map((run, index) => (
                       <tr key={run.uuid || index}>
-                        <td><span className={badgeClass(run.result)}>{run.result}</span></td>
+                        <td>
+                          <span className={badgeClass(run.result)}>{run.result}</span>
+                          {run.state_type === 'PAUSED' && (
+                            <div className="mt-1">
+                              <span className="badge bg-warning text-dark">Manual Step Required</span>
+                              <a href={run.pipeline_link} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-info ms-2">
+                                Manual Deploy
+                              </a>
+                            </div>
+                          )}
+                          {run.state_type && run.state_type !== 'COMPLETED' && run.state_type !== 'PAUSED' && (
+                            <small className="text-muted d-block">Status: {run.state_type} {run.state_name ? `(${run.state_name})` : ''}</small>
+                          )}
+                        </td>
                         <td>
                           <a href={run.pipeline_link} className="ref-link" target="_blank" rel="noopener noreferrer">
                             {run.ref_name}

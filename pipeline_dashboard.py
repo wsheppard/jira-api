@@ -52,11 +52,18 @@ class PipelineDashboard:
                     commit = pipeline.get("target", {}).get("commit", {})
                     commit_hash = commit.get("hash")
                     commit_link = commit.get("links", {}).get("html", {}).get("href")
+                    state_type = state.get("type")
+                    state_name = state.get("name")
+                    state_result_name = state.get("result", {}).get("name")
+
                     entries.append({
                         "uuid": pipeline.get("uuid"),
                         "ref_name": ref,
                         "completed_on": completed,
-                        "result": result,
+                        "result": result, # Keep existing for compatibility
+                        "state_type": state_type,
+                        "state_name": state_name,
+                        "state_result_name": state_result_name,
                         "commit": commit_hash,
                         "commit_link": commit_link,
                         "pipeline_link": (
