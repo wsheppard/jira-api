@@ -193,15 +193,17 @@ async def open_issues_by_due():
 
 @app.get("/backlog")
 async def backlog():
-    """Aggregate Jira issues with status *To Do* across instances."""
+    """Aggregate Jira issues with status *To Do* from Palliativa instance."""
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
     fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
 
     async with httpx.AsyncClient() as client:
-        for cfg in configs:
-            jql = 'status = "To Do" ORDER BY updated ASC'
-            json_data = {"jql": jql, "fields": fields, "maxResults": 10}
+        # Only query the "palliativa" instance
+        cfg = next((c for c in configs if c["name"] == "palliativa"), None)
+        if cfg:
+            jql = 'project = "AP" AND statusCategory = "To Do" ORDER BY updated ASC'
+            json_data = {"jql": jql, "fields": fields, "maxResults": 20}
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
             resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
                                      headers=headers, json=json_data)
