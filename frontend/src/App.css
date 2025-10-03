@@ -32,3 +32,15 @@
 .ref-link:hover {
   background-color: #dde;
 }
+
+.priority-high {
+  border-left: 5px solid red;
+}
+
+.priority-medium {
+  border-left: 5px solid orange;
+}
+
+.priority-low {
+  border-left: 5px solid green;
+}

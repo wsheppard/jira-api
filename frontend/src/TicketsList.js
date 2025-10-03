@@ -24,17 +24,29 @@ function TicketsList({ tickets }) {
     return Math.floor((Date.now() - new Date(dateString)) / (1000 * 60 * 60 * 24));
   };
 
+  const priorityClass = (priority) => {
+    if (!priority) return '';
+    const priorityValue = priority.toLowerCase();
+    if (priorityValue === 'high') return 'priority-high';
+    if (priorityValue === 'medium') return 'priority-medium';
+    if (priorityValue === 'low') return 'priority-low';
+    return '';
+  };
+
   return (
     <div className="row row-cols-1 row-cols-md-3 g-4 mb-5">
       {tickets.map(ticket => (
         <div className="col" key={ticket.ticket}>
           <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-body">
-            <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''}`}>
+            <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
               <div className={`card-header ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
                 <span className="ticket-key d-block text-truncate">{ticket.ticket}</span>
               </div>
               <div className="card-body">
                 <p className="card-text">{ticket.title}</p>
+                {ticket.priority && (
+                  <p className="card-text"><small className="text-muted">Priority: {ticket.priority}</small></p>
+                )}
                 {ticket.dueDate && (
                   <p className="card-text"><small className="text-muted">Due: {ticket.dueDate}</small></p>
                 )}

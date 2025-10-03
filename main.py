@@ -96,7 +96,7 @@ async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
@@ -115,6 +115,7 @@ async def in_progress():
                 issue_fields = issue.get("fields", {})
                 assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
+                priority = (issue_fields.get("priority") or {}).get("name")
 
                 flattened.append(
                     {
@@ -127,6 +128,7 @@ async def in_progress():
                         "dueDate": issue_fields.get("duedate"),
                         "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
+                        "priority": priority,
                     }
                 )
 
@@ -139,7 +141,7 @@ async def open_issues_by_due():
     """Open (not-done) Jira issues sorted by due date (overdue first)."""
     aggregated: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
@@ -162,6 +164,7 @@ async def open_issues_by_due():
 
                 assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
+                priority = (issue_fields.get("priority") or {}).get("name")
 
                 aggregated.append(
                     {
@@ -174,6 +177,7 @@ async def open_issues_by_due():
                         "dueDate": due,
                         "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
+                        "priority": priority,
                     }
                 )
 
@@ -192,7 +196,7 @@ async def backlog():
     """Aggregate Jira issues with status *To Do* across instances."""
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status"]
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
@@ -211,6 +215,7 @@ async def backlog():
                 issue_fields = issue.get("fields", {})
                 assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
+                priority = (issue_fields.get("priority") or {}).get("name")
 
                 flattened.append(
                     {
@@ -223,6 +228,7 @@ async def backlog():
                         "dueDate": issue_fields.get("duedate"),
                         "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
+                        "priority": priority,
                     }
                 )
 
