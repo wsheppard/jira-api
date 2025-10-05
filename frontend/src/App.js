@@ -10,7 +10,7 @@ function App() {
   const [pipelineData, setPipelineData] = useState({ frontend: {}, backend: {} });
   const [pipelineCategories, setPipelineCategories] = useState([]);
 
-  useEffect(() => {
+  const fetchData = () => {
     fetch('/open-issues-by-due')
       .then(res => res.json())
       .then(data => setOpenTickets(data))
@@ -36,6 +36,12 @@ function App() {
         }
       })
       .catch(err => console.error('Failed to load pipeline dashboard:', err));
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   return (

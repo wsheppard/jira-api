@@ -7,14 +7,17 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-    ports:
-      - "8000:8000"
     volumes:
       - ./:/app
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     networks:
       docker_static:
         ipv4_address: 10.15.0.50
+
+    labels:
+          - "traefik.enable=true"
+          - "traefik.http.routers.jira-api.rule=Host(`jira.dev.jjrsoftware.co.uk`)"
+          - "traefik.http.services.jira-api.loadbalancer.server.port=80"
 
 networks:
   docker_static:

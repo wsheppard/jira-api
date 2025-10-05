@@ -42,19 +42,13 @@ class PipelineDashboard:
                     ref = pipeline.get("target", {}).get("ref_name")
                     completed = pipeline.get("completed_on")
                     state = pipeline.get("state", {}) or {}
-                    result = None
-                    if isinstance(state, dict):
-                        result = (
-                            state.get("result", {}).get("name")
-                            or state.get("name")
-                            or state.get("type")
-                        )
-                    commit = pipeline.get("target", {}).get("commit", {})
-                    commit_hash = commit.get("hash")
-                    commit_link = commit.get("links", {}).get("html", {}).get("href")
                     state_type = state.get("type")
                     state_name = state.get("name")
                     state_result_name = state.get("result", {}).get("name")
+                    result = state.get("stage", {}).get("name") or state_name or state_result_name or state_type
+                    commit = pipeline.get("target", {}).get("commit", {})
+                    commit_hash = commit.get("hash")
+                    commit_link = commit.get("links", {}).get("html", {}).get("href")
 
                     entries.append({
                         "uuid": pipeline.get("uuid"),
@@ -66,10 +60,7 @@ class PipelineDashboard:
                         "state_result_name": state_result_name,
                         "commit": commit_hash,
                         "commit_link": commit_link,
-                        "pipeline_link": (
-                            pipeline.get("links", {}).get("html", {}).get("href")
-                            or pipeline.get("links", {}).get("self", {}).get("href")
-                        ),
+                        "pipeline_link": f"https://bitbucket.org/{workspace}/{repo_slug}/pipelines/results/{pipeline.get('uuid')}"
                     })
                 repo_data[pattern] = entries
             await client.close()
