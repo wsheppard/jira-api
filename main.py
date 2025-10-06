@@ -100,7 +100,7 @@ async def in_progress():
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
-            jql = 'status = "In Progress"'
+            jql = 'statusCategory = "In Progress"'
             json_data = {"jql": jql, "fields": fields}
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
             resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
