@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  web:
+    image: nginx:1.27-alpine
+    container_name: jira-www
+    restart: unless-stopped
+
+    volumes:
+      - ./frontend/build:/usr/share/nginx/html:ro
+      - ./nginx_spa.conf:/etc/nginx/conf.d/default.conf:ro
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jira-www.rule=Host(`jira.dev.jjrsoftware.co.uk`)"
+      - "traefik.http.services.jira-www.loadbalancer.server.port=80"
+
+  jira-api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--reload"]
+
+    labels:
+          - "traefik.enable=true"
+          - "traefik.http.routers.jira-api.rule=Host(`jira.api.jjrsoftware.co.uk`)"
+          - "traefik.http.services.jira-api.loadbalancer.server.port=80"

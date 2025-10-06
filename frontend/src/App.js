@@ -11,22 +11,22 @@ function App() {
   const [pipelineCategories, setPipelineCategories] = useState([]);
 
   const fetchData = () => {
-    fetch('/open-issues-by-due')
+    fetch('https://jira.api.jjrsoftware.co.uk/open-issues-by-due')
       .then(res => res.json())
       .then(data => setOpenTickets(data))
       .catch(err => console.error('Failed to load open tickets:', err));
 
-    fetch('/in-progress')
+    fetch('https://jira.api.jjrsoftware.co.uk/in-progress')
       .then(res => res.json())
       .then(data => setInProgressTickets(data))
       .catch(err => console.error('Failed to load in-progress tickets:', err));
 
-    fetch('/backlog')
+    fetch('https://jira.api.jjrsoftware.co.uk/backlog')
       .then(res => res.json())
       .then(data => setBacklogTickets(data))
       .catch(err => console.error('Failed to load backlog tickets:', err));
 
-    fetch('/pipeline-dashboard')
+    fetch('https://jira.api.jjrsoftware.co.uk/pipeline-dashboard')
       .then(res => res.json())
       .then(data => {
         setPipelineData(data);
