@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 import asyncio
@@ -80,6 +81,15 @@ configs: List[Dict[str, Any]] = [
 
 app = FastAPI(title="Jira / Bitbucket Bridge")
 
+
+# Add CORS middleware to allow requests from the frontend service
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://jira.dev.jjrsoftware.co.uk"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
