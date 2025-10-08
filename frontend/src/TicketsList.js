@@ -33,6 +33,19 @@ function TicketsList({ tickets }) {
     return '';
   };
 
+  const getIssueTypeIcon = (issueType) => {
+    if (!issueType) return '';
+    const issueTypeLower = issueType.toLowerCase();
+    if (issueTypeLower === 'bug') {
+      return 'fa-solid fa-bug';
+    } else if (issueTypeLower === 'story') {
+      return 'fa-solid fa-book-open';
+    } else if (issueTypeLower === 'task') {
+      return 'fa-solid fa-check-square';
+    }
+    return 'fa-solid fa-question-circle';
+  };
+
   return (
     <div className="row row-cols-1 row-cols-md-3 g-4 mb-5">
       {tickets.map(ticket => (
@@ -40,7 +53,10 @@ function TicketsList({ tickets }) {
           <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-body">
             <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
               <div className={`card-header ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
-                <span className="ticket-key d-block text-truncate">{ticket.ticket}</span>
+                <span className="ticket-key d-block text-truncate">
+                  <i className={`${getIssueTypeIcon(ticket.issuetype)} me-2`}></i>
+                  {ticket.ticket}
+                </span>
               </div>
               <div className="card-body">
                 <p className="card-text">{ticket.title}</p>

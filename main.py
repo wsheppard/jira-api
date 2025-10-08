@@ -97,27 +97,22 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 
-def _jira_client(cfg: Dict[str, Any]) -> httpx.AsyncClient:
-    return httpx.AsyncClient(auth=(cfg["email"], cfg["token"]))
-
-
-@app.get("/in-progress")
-async def in_progress():
-    """Aggregate Jira issues with status *In Progress* across instances."""
+async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
+    """Run a JQL search across all configured Jira instances and return a
+    flattened list of issues.
+    """
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
-            jql = 'statusCategory = "In Progress"'
             json_data = {"jql": jql, "fields": fields}
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
             resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
                                      headers=headers, json=json_data)
 
             if resp.status_code != 200:
-                print(f"--- JIRA ERROR (in-progress) ---")
+                print(f"--- JIRA ERROR ---")
                 print(f"Response body:\n{resp.text}")
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
@@ -126,6 +121,7 @@ async def in_progress():
                 assignee = issue_fields.get("assignee") or {}
                 avatar = (assignee.get("avatarUrls") or {}).get("32x32")
                 priority = (issue_fields.get("priority") or {}).get("name")
+                issuetype = (issue_fields.get("issuetype") or {}).get("name")
 
                 flattened.append(
                     {
@@ -140,9 +136,18 @@ async def in_progress():
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
                         "priority": priority,
                         "labels": issue_fields.get("labels", []),
+                        "issuetype": issuetype,
                     }
                 )
+    return flattened
 
+
+@app.get("/in-progress")
+async def in_progress():
+    """Aggregate Jira issues with status *In Progress* across instances."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = 'statusCategory = "In Progress"'
+    flattened = await _search_jira(jql, fields)
     flattened.sort(key=lambda i: i.get("updated") or "")
     return flattened
 
@@ -150,47 +155,9 @@ async def in_progress():
 @app.get("/open-issues-by-due")
 async def open_issues_by_due():
     """Open (not-done) Jira issues sorted by due date (overdue first)."""
-    aggregated: List[Dict[str, Any]] = []
-    headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
-
-    async with httpx.AsyncClient() as client:
-        for cfg in configs:
-            jql = "statusCategory != Done"
-            json_data = {"jql": jql, "fields": fields}
-            url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
-            resp = await client.post(url, auth=(cfg["email"], cfg["token"]),
-                                     headers=headers, json=json_data)
-
-            if resp.status_code != 200:
-                print(f"--- JIRA ERROR (open-issues-by-due) ---")
-                print(f"Response body:\n{resp.text}")
-                raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
-            for issue in resp.json().get("issues", []):
-                issue_fields = issue.get("fields", {})
-                due = issue_fields.get("duedate")
-                if not due:
-                    continue  # skip issues without due-date
-
-                assignee = issue_fields.get("assignee") or {}
-                avatar = (assignee.get("avatarUrls") or {}).get("32x32")
-                priority = (issue_fields.get("priority") or {}).get("name")
-
-                aggregated.append(
-                    {
-                        "instance": cfg["name"],
-                        "ticket": issue.get("key"),
-                        "project": issue_fields.get("project", {}).get("key"),
-                        "assignee": assignee.get("displayName"),
-                        "avatarUrl": avatar,
-                        "updated": issue_fields.get("updated"),
-                        "dueDate": due,
-                        "title": issue_fields.get("summary"),
-                        "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
-                        "priority": priority,
-                    }
-                )
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "issuetype"]
+    jql = "statusCategory != Done"
+    aggregated = await _search_jira(jql, fields)
 
     today = date.today().isoformat()
 
@@ -205,46 +172,9 @@ async def open_issues_by_due():
 @app.get("/backlog")
 async def backlog():
     """Aggregate Jira issues with status *To Do* from Palliativa instance."""
-    flattened: List[Dict[str, Any]] = []
-    headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
-
-    async with httpx.AsyncClient() as client:
-        # Only query the "palliativa" instance
-        cfg = next((c for c in configs if c["name"] == "palliativa"), None)
-        if cfg:
-            jql = 'project = "AP" AND statusCategory = "To Do" ORDER BY updated ASC'
-            json_data = {"jql": jql, "fields": fields, "maxResults": 20}
-            search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
-            resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
-                                     headers=headers, json=json_data)
-
-            if resp.status_code != 200:
-                print(f"--- JIRA ERROR (backlog) ---")
-                print(f"Response body:\n{resp.text}")
-                raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
-            for issue in resp.json().get("issues", []):
-                issue_fields = issue.get("fields", {})
-                assignee = issue_fields.get("assignee") or {}
-                avatar = (assignee.get("avatarUrls") or {}).get("32x32")
-                priority = (issue_fields.get("priority") or {}).get("name")
-
-                flattened.append(
-                    {
-                        "instance": cfg["name"],
-                        "ticket": issue.get("key"),
-                        "project": issue_fields.get("project", {}).get("key"),
-                        "assignee": assignee.get("displayName"),
-                        "avatarUrl": avatar,
-                        "updated": issue_fields.get("updated"),
-                        "dueDate": issue_fields.get("duedate"),
-                        "title": issue_fields.get("summary"),
-                        "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
-                        "priority": priority,
-                    }
-                )
-
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "issuetype"]
+    jql = 'project = "AP" AND statusCategory = "To Do" ORDER BY updated ASC'
+    flattened = await _search_jira(jql, fields)
     return flattened
 
 
