@@ -106,7 +106,7 @@ async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority"]
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels"]
 
     async with httpx.AsyncClient() as client:
         for cfg in configs:
@@ -139,6 +139,7 @@ async def in_progress():
                         "title": issue_fields.get("summary"),
                         "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
                         "priority": priority,
+                        "labels": issue_fields.get("labels", []),
                     }
                 )
 

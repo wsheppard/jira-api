@@ -44,6 +44,13 @@ function TicketsList({ tickets }) {
               </div>
               <div className="card-body">
                 <p className="card-text">{ticket.title}</p>
+                {ticket.labels && ticket.labels.length > 0 && (
+                  <p className="card-text">
+                    {ticket.labels.map(label => (
+                      <span key={label} className="badge bg-secondary me-1">{label}</span>
+                    ))}
+                  </p>
+                )}
                 {ticket.priority && (
                   <p className="card-text"><small className="text-muted">Priority: {ticket.priority}</small></p>
                 )}
