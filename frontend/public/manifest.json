@@ -1,6 +1,7 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "JJR Jira",
+  "name": "JJR Jira Dashboard",
+  "description": "Dashboard bridge for Jira and Bitbucket insights.",
   "icons": [
     {
       "src": "favicon.ico",
