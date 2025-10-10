@@ -37,11 +37,11 @@ from fastapi.staticfiles import StaticFiles
 
 from pipeline_dashboard import PipelineDashboard
 
-# enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger("httpx").setLevel(logging.DEBUG)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+# reduce noisy dependency logging; disable httpx chatter entirely
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
+logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 # module logger
 logger = logging.getLogger(__name__)
@@ -110,6 +110,7 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
             if cached:
                 cached_at, cached_payload = cached
                 if now - cached_at < JIRA_CACHE_TTL_SECONDS:
+                    logger.info("Serving cached Jira response for JQL: %s", jql)
                     return copy.deepcopy(cached_payload)
                 _jira_cache.pop(cache_key, None)
 
@@ -120,6 +121,7 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
         for cfg in configs:
             json_data = {"jql": jql, "fields": fields}
             search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+            logger.info("Querying Jira [%s]: %s", cfg["name"], jql)
             resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]),
                                      headers=headers, json=json_data)
 
@@ -171,15 +173,17 @@ async def in_progress():
 async def open_issues_by_due():
     """Open (not-done) Jira issues sorted by due date (overdue first)."""
     fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "issuetype"]
-    jql = "statusCategory != Done"
+    jql = "statusCategory != Done AND duedate IS NOT EMPTY"
     aggregated = await _search_jira(jql, fields)
 
     today = date.today().isoformat()
 
+    # Only show issues with an explicit due date; the frontend "due" view
+    # should not list everything that's merely open.
+    aggregated = [item for item in aggregated if item.get("dueDate")]
+
     def sort_key(item: Dict[str, Any]):
         due = item.get("dueDate")
-        if not due:
-            return (True, "9999-12-31")  # push items without a due date to the end
         return (due >= today, due)  # overdue first (False < True)
 
     aggregated.sort(key=sort_key)
@@ -193,6 +197,16 @@ async def backlog():
     jql = 'project = "AP" AND statusCategory = "To Do" ORDER BY updated ASC'
     flattened = await _search_jira(jql, fields)
     return flattened
+
+
+@app.get("/manager-meeting")
+async def manager_meeting():
+    """Tickets tagged for the manager meeting across Jira instances."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = 'statusCategory != Done AND labels = "ManagerMeeting"'
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "")
+    return tickets
 
 
 # ---------------------------------------------------------------------------

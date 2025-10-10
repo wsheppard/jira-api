@@ -7,6 +7,7 @@ function App() {
   const [openTickets, setOpenTickets] = useState([]);
   const [inProgressTickets, setInProgressTickets] = useState([]);
   const [backlogTickets, setBacklogTickets] = useState([]);
+  const [managerMeetingTickets, setManagerMeetingTickets] = useState([]);
   const [pipelineData, setPipelineData] = useState({ frontend: {}, backend: {} });
   const [pipelineCategories, setPipelineCategories] = useState([]);
 
@@ -26,6 +27,11 @@ function App() {
       .then(data => setBacklogTickets(data))
       .catch(err => console.error('Failed to load backlog tickets:', err));
 
+    fetch('https://jira.api.jjrsoftware.co.uk/manager-meeting')
+      .then(res => res.json())
+      .then(data => setManagerMeetingTickets(data))
+      .catch(err => console.error('Failed to load manager meeting tickets:', err));
+
     fetch('https://jira.api.jjrsoftware.co.uk/pipeline-dashboard')
       .then(res => res.json())
       .then(data => {
@@ -40,7 +46,7 @@ function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(fetchData, 180000);
     return () => clearInterval(interval);
   }, []);
 
@@ -52,6 +58,8 @@ function App() {
       <TicketsList tickets={inProgressTickets} />
       <h1>Backlog</h1>
       <TicketsList tickets={backlogTickets} />
+      <h1>Manager Meeting</h1>
+      <TicketsList tickets={managerMeetingTickets} />
       <h1 className="mt-5">Latest Tag per Environment</h1>
       <h1 className="mt-5">Pipeline Dashboard</h1>
       <PipelineDashboard data={pipelineData} categories={pipelineCategories} />
