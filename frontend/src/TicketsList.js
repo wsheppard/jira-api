@@ -47,9 +47,9 @@ function TicketsList({ tickets }) {
   };
 
   return (
-    <div className="row row-cols-1 row-cols-md-3 g-4 mb-5">
+    <div className="tickets-grid mb-5">
       {tickets.map(ticket => (
-        <div className="col" key={ticket.ticket}>
+        <div className="tickets-grid__item" key={ticket.ticket}>
           <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-body">
             <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
               <div className={`card-header ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>

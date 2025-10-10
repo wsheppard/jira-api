@@ -51,7 +51,7 @@ function App() {
   }, []);
 
   return (
-    <div className="container my-4">
+    <div className="container-fluid p-4">
       <h1>Open Tickets by Due Date</h1>
       <TicketsList tickets={openTickets} />
       <h1>In Progress Tickets</h1>
