@@ -1,6 +1,10 @@
 import React from 'react';
 
 function TicketsList({ tickets }) {
+  if (!tickets || tickets.length === 0) {
+    return <p className="text-muted fst-italic">No tickets to display.</p>;
+  }
+
   const timeAgo = (dateString) => {
     if (!dateString) return '';
     const now = new Date();

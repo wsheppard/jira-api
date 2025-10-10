@@ -71,7 +71,7 @@ configs: List[Dict[str, Any]] = [
 ]
 
 # Cache Jira results to avoid thrashing the API; configure TTL via env var.
-JIRA_CACHE_TTL_SECONDS = int(os.getenv("JIRA_CACHE_TTL_SECONDS", "30"))
+JIRA_CACHE_TTL_SECONDS = int(os.getenv("JIRA_CACHE_TTL_SECONDS", "20"))
 _jira_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[float, List[Dict[str, Any]]]] = {}
 _jira_cache_lock = asyncio.Lock()
 
