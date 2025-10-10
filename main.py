@@ -21,24 +21,20 @@ Jira endpoints use the per-instance email/token pairs configured through the
 existing environment variables.
 """
 
-from __future__ import annotations
-
-import base64
+import asyncio
+import copy
+import logging
 import os
+import time
 from datetime import date
 from typing import Any, Dict, List, Tuple
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-import logging
-import asyncio
-import json
-from bbclient import BitbucketClient
 from pipeline_dashboard import PipelineDashboard
 
 # enable debug logs for HTTPX calls (requests/responses), suppress socket-level chatter
@@ -74,6 +70,11 @@ configs: List[Dict[str, Any]] = [
     {"name": "jjrsoftware", "email": email, "token": jira_token, "base_url": "https://jjrsoftware.atlassian.net"},
 ]
 
+# Cache Jira results to avoid thrashing the API; configure TTL via env var.
+JIRA_CACHE_TTL_SECONDS = int(os.getenv("JIRA_CACHE_TTL_SECONDS", "30"))
+_jira_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[float, List[Dict[str, Any]]]] = {}
+_jira_cache_lock = asyncio.Lock()
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -101,6 +102,17 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
     """Run a JQL search across all configured Jira instances and return a
     flattened list of issues.
     """
+    cache_key = (jql, tuple(fields))
+    if JIRA_CACHE_TTL_SECONDS > 0:
+        now = time.monotonic()
+        async with _jira_cache_lock:
+            cached = _jira_cache.get(cache_key)
+            if cached:
+                cached_at, cached_payload = cached
+                if now - cached_at < JIRA_CACHE_TTL_SECONDS:
+                    return copy.deepcopy(cached_payload)
+                _jira_cache.pop(cache_key, None)
+
     flattened: List[Dict[str, Any]] = []
     headers = {"Content-Type": "application/json"}
 
@@ -139,6 +151,9 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                         "issuetype": issuetype,
                     }
                 )
+    if JIRA_CACHE_TTL_SECONDS > 0:
+        async with _jira_cache_lock:
+            _jira_cache[cache_key] = (time.monotonic(), copy.deepcopy(flattened))
     return flattened
 
 
@@ -162,7 +177,9 @@ async def open_issues_by_due():
     today = date.today().isoformat()
 
     def sort_key(item: Dict[str, Any]):
-        due = item["dueDate"]
+        due = item.get("dueDate")
+        if not due:
+            return (True, "9999-12-31")  # push items without a due date to the end
         return (due >= today, due)  # overdue first (False < True)
 
     aggregated.sort(key=sort_key)
