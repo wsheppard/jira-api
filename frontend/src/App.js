@@ -14,9 +14,44 @@ const VIEW_CONFIG = {
 };
 
 const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'pipeline'];
+const DEFAULT_VIEW = 'open';
+
+const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
+
+const normalizePath = (path) => {
+  if (!path) {
+    return '/';
+  }
+  if (path.length > 1 && path.endsWith('/')) {
+    return path.replace(/\/+$/, '');
+  }
+  return path;
+};
+
+const viewFromLocation = (path) => {
+  const normalized = normalizePath(path);
+  if (normalized === '/' || normalized === '') {
+    return DEFAULT_VIEW;
+  }
+  const match = normalized.match(/^\/view\/([^/]+)$/);
+  if (match) {
+    const candidate = match[1];
+    if (VIEW_CONFIG[candidate]) {
+      return candidate;
+    }
+  }
+  return DEFAULT_VIEW;
+};
 
 function App() {
-  const [activeView, setActiveView] = useState('open');
+  const deriveInitialView = () => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_VIEW;
+    }
+    return viewFromLocation(window.location.pathname);
+  };
+
+  const [activeView, setActiveView] = useState(deriveInitialView);
   const [ticketsByView, setTicketsByView] = useState({
     open: [],
     inProgress: [],
@@ -28,6 +63,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const pendingRequests = useRef(0);
+  const hasSyncedInitialPath = useRef(false);
+  const activeConfig = VIEW_CONFIG[activeView];
 
   const markRequestStart = useCallback(() => {
     pendingRequests.current += 1;
@@ -95,14 +132,50 @@ function App() {
   }, []);
 
   const handleSelectView = useCallback((viewId) => {
+    if (!VIEW_CONFIG[viewId]) {
+      return;
+    }
+    if (viewId === activeView) {
+      fetchViewData(viewId);
+      hideOffcanvas();
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const newPath = pathForView(viewId);
+      window.history.pushState({ view: viewId }, '', newPath);
+    }
     setActiveView(viewId);
-    fetchViewData(viewId);
     hideOffcanvas();
-  }, [fetchViewData, hideOffcanvas]);
+  }, [activeView, fetchViewData, hideOffcanvas]);
 
   useEffect(() => {
-    fetchViewData('open');
-  }, [fetchViewData]);
+    const onPopState = () => {
+      const nextView = viewFromLocation(window.location.pathname);
+      setActiveView((prev) => (prev === nextView ? prev : nextView));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !hasSyncedInitialPath.current) {
+      const desiredPath = pathForView(activeView);
+      if (window.location.pathname !== desiredPath) {
+        window.history.replaceState({ view: activeView }, '', desiredPath);
+      }
+      hasSyncedInitialPath.current = true;
+    }
+    fetchViewData(activeView);
+  }, [activeView, fetchViewData]);
+
+  useEffect(() => {
+    const baseTitle = 'JJR Jira Dashboard';
+    if (activeConfig) {
+      document.title = `${activeConfig.label} • ${baseTitle}`;
+    } else {
+      document.title = baseTitle;
+    }
+  }, [activeConfig]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -110,8 +183,6 @@ function App() {
     }, 30000);
     return () => clearInterval(interval);
   }, [activeView, fetchViewData]);
-
-  const activeConfig = VIEW_CONFIG[activeView];
 
   let viewContent = null;
   if (activeConfig?.type === 'pipeline') {
