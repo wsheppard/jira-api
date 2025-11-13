@@ -368,7 +368,7 @@ async def deployments() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     Alias for the pipeline-dashboard: latest pipeline runs per tag-category per repo.
     """
     repos = ["palliativa/frontend", "palliativa/backend"]
-    categories = ["qa/v*", "staging/v*", "prod/v*"]
+    categories = ["dev/*", "qa/v*", "staging/v*", "prod/v*"]
     dashboard = PipelineDashboard(bb_token, repos)
     return await dashboard.get_dashboard(
         categories=categories,
@@ -381,7 +381,7 @@ async def deployments() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
 async def pipeline_dashboard() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """Return the latest pipelines per tag-category per configured repositories."""
     repos = ["palliativa/frontend", "palliativa/backend"]
-    categories = ["qa/v*", "staging/v*", "prod/v*"]
+    categories = ["dev/*", "qa/v*", "staging/v*", "prod/v*"]
     dashboard = PipelineDashboard(bb_token, repos)
     return await dashboard.get_dashboard(categories=categories, pagelen=10, max_items=10)
 
