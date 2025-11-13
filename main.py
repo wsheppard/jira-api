@@ -86,7 +86,7 @@ app = FastAPI(title="Jira / Bitbucket Bridge")
 # Add CORS middleware to allow requests from the frontend service
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://jira.dev.jjrsoftware.co.uk"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
