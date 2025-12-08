@@ -62,6 +62,7 @@ function App() {
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+const [nextPollIn, setNextPollIn] = useState(30);
   const pendingRequests = useRef(0);
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
@@ -91,6 +92,7 @@ function App() {
     if (!config) {
       return;
     }
+    setNextPollIn(30);
 
     markRequestStart();
     setErrorMessage('');
@@ -183,18 +185,12 @@ function App() {
     }, 30000);
     return () => clearInterval(interval);
   }, [activeView, fetchViewData]);
-
-  let viewContent = null;
-  if (activeConfig?.type === 'pipeline') {
-    if (pipelineCategories.length === 0 && !isLoading) {
-      viewContent = <p className="text-muted fst-italic">No pipeline data available.</p>;
-    } else {
-      viewContent = <PipelineDashboard data={pipelineData} categories={pipelineCategories} />;
-    }
-  } else {
-    viewContent = <TicketsList tickets={ticketsByView[activeView] || []} />;
-  }
-
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNextPollIn(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -206,6 +202,7 @@ function App() {
             </div>
           )}
         </div>
+          {nextPollIn > 0 && <small className="text-muted">Next update in {nextPollIn}s</small>}
         <button
           className="btn btn-outline-primary"
           type="button"
@@ -252,7 +249,15 @@ function App() {
         </div>
       </div>
 
-      {viewContent}
+      {activeConfig?.type === 'pipeline' ? (
+        pipelineCategories.length === 0 && !isLoading ? (
+          <p className="text-muted fst-italic">No pipeline data available.</p>
+        ) : (
+          <PipelineDashboard data={pipelineData} categories={pipelineCategories} />
+        )
+      ) : (
+        <TicketsList tickets={ticketsByView[activeView] || []} />
+      )}
     </div>
   );
 }
