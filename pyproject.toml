@@ -6,4 +6,4 @@ target-version = "py311"
 select = ["E", "F", "I", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["bbclient", "pipeline_dashboard", "main"]
+known-first-party = ["backend"]

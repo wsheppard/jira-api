@@ -10,10 +10,11 @@ const VIEW_CONFIG = {
   inProgress: { label: 'In Progress Tickets', endpoint: 'in-progress', type: 'tickets' },
   backlog: { label: 'Backlog', endpoint: 'backlog', type: 'tickets' },
   managerMeeting: { label: 'Manager Meeting', endpoint: 'manager-meeting', type: 'tickets' },
+  recentActivity: { label: 'Updated Last 72h (excl. last 30m)', endpoint: 'recently-updated', type: 'tickets' },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
 
-const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'pipeline'];
+const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'recentActivity', 'pipeline'];
 const DEFAULT_VIEW = 'open';
 
 const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
@@ -57,6 +58,7 @@ function App() {
     inProgress: [],
     backlog: [],
     managerMeeting: [],
+    recentActivity: [],
   });
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
@@ -239,6 +241,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   key={viewId}
                   type="button"
                   className={`list-group-item list-group-item-action ${activeView === viewId ? 'active' : ''}`}
+                  data-bs-dismiss="offcanvas"
                   onClick={() => handleSelectView(viewId)}
                 >
                   {config.label}

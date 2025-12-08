@@ -33,7 +33,6 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from pipeline_dashboard import PipelineDashboard
 
@@ -206,6 +205,16 @@ async def manager_meeting():
     jql = 'statusCategory != Done AND labels = "ManagerMeeting"'
     tickets = await _search_jira(jql, fields)
     tickets.sort(key=lambda i: i.get("updated") or "")
+    return tickets
+
+
+@app.get("/recently-updated")
+async def recently_updated():
+    """Tickets updated in the last 72h but not within the last 30 minutes."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = "updated >= -72h AND updated <= -30m"
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)
     return tickets
 
 
@@ -464,5 +473,3 @@ async def repo_list() -> List[Dict[str, Any]]:
                 }
             )
     return out
-
-app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
