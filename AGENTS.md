@@ -35,3 +35,8 @@ This file contains instructions for the coding agent on how to work within this 
 - Tickets UI: `frontend/src/TicketsList.js` – card grid with overdue wiggle animation, priority borders, labels, assignee avatar, and time-ago metadata.
 - Pipeline UI: `frontend/src/PipelineDashboard.js` – per-environment summary of latest successful frontend/backend runs plus detailed tables with result badges, links, and manual-step callouts.
 - Frontend styles: `frontend/src/App.css` – grid layout, wiggle animation for stale tickets, priority color stripes, and pipeline ref badge styling.
+
+## Gemini Notes (Jira API)
+
+- Jira Cloud REST API v2 is deprecated; always use v3 endpoints.
+- JQL search should hit `/rest/api/3/search/jql` per Atlassian changelog (https://developer.atlassian.com/changelog/#CHANGE-2046).
