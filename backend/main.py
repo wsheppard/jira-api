@@ -74,6 +74,48 @@ JIRA_CACHE_TTL_SECONDS = int(os.getenv("JIRA_CACHE_TTL_SECONDS", "20"))
 _jira_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[float, List[Dict[str, Any]]]] = {}
 _jira_cache_lock = asyncio.Lock()
 
+
+def _adf_to_text(node: Any) -> str:
+    """Best-effort conversion of Atlassian Document Format to plain text."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(_adf_to_text(child) for child in node)
+    if isinstance(node, dict):
+        node_type = node.get("type")
+        # Text node
+        if node_type == "text":
+            return node.get("text", "")
+        # Hard/soft breaks
+        if node_type in {"hardBreak", "paragraph", "heading", "bulletList", "orderedList", "listItem"}:
+            content = node.get("content") or []
+            separator = "\n" if node_type in {"paragraph", "heading", "listItem"} else ""
+            return separator.join(filter(None, (_adf_to_text(c) for c in content)))
+        # If it's a container with content
+        content = node.get("content")
+        if content:
+            return "".join(_adf_to_text(c) for c in content)
+    return ""
+
+
+def _latest_comment(issue_fields: Dict[str, Any]) -> Dict[str, Any] | None:
+    comments_block = issue_fields.get("comment") or {}
+    comments = comments_block.get("comments") or []
+    if not comments:
+        return None
+    latest = max(comments, key=lambda c: c.get("updated") or c.get("created") or "")
+    body_raw = latest.get("body")
+    body_text = _adf_to_text(body_raw).strip()
+    if len(body_text) > 300:
+        body_text = body_text[:297] + "..."
+    return {
+        "author": (latest.get("author") or {}).get("displayName"),
+        "created": latest.get("created") or latest.get("updated"),
+        "body": body_text,
+    }
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -136,6 +178,8 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                 priority = (issue_fields.get("priority") or {}).get("name")
                 issuetype = (issue_fields.get("issuetype") or {}).get("name")
 
+                latest_comment = _latest_comment(issue_fields)
+
                 flattened.append(
                     {
                         "instance": cfg["name"],
@@ -150,6 +194,7 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                         "priority": priority,
                         "labels": issue_fields.get("labels", []),
                         "issuetype": issuetype,
+                        "latestComment": latest_comment,
                     }
                 )
     if JIRA_CACHE_TTL_SECONDS > 0:
@@ -211,7 +256,7 @@ async def manager_meeting():
 @app.get("/recently-updated")
 async def recently_updated():
     """Tickets updated in the last 72h but not within the last 30 minutes."""
-    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype", "comment"]
     jql = "updated >= -72h AND updated <= -30m"
     tickets = await _search_jira(jql, fields)
     tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)

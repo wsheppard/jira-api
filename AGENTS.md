@@ -27,7 +27,7 @@ This file contains instructions for the coding agent on how to work within this 
 
 ## Semantic Index (feature → code map)
 
-- Backend API: `backend/main.py` – FastAPI app exposing Jira views (`/open-issues-by-due`, `/in-progress`, `/backlog`, `/manager-meeting`, `/recently-updated`) plus Bitbucket utilities (`/bitbucket-test`, `/bitbucket-commits`, `/bitbucket-repos`) and pipeline/deployment data (`/pipeline-dashboard`, `/deployments`).
+- Backend API: `backend/main.py` – FastAPI app exposing Jira views (`/open-issues-by-due`, `/in-progress`, `/backlog`, `/manager-meeting`, `/recently-updated` with latest comment extraction) plus Bitbucket utilities (`/bitbucket-test`, `/bitbucket-commits`, `/bitbucket-repos`) and pipeline/deployment data (`/pipeline-dashboard`, `/deployments`).
 - Bitbucket pipeline aggregator: `backend/pipeline_dashboard.py` – wraps `BitbucketClient` to fetch pipelines per repo/tag pattern and shape data for the pipeline dashboard.
 - Jira/Bitbucket client: `backend/bbclient.py` – Bitbucket REST helper and pipeline iterator used by the pipeline dashboard.
 - Frontend entry: `frontend/src/index.js` – mounts `<App />`, loads Bootstrap CSS/JS.

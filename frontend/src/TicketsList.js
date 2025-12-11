@@ -28,6 +28,17 @@ function TicketsList({ tickets }) {
     return Math.floor((Date.now() - new Date(dateString)) / (1000 * 60 * 60 * 24));
   };
 
+  const dueDeltaLabel = (dueDate) => {
+    if (!dueDate) return '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDate + 'T00:00:00');
+    const diffDays = Math.round((due - today) / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'Due today';
+    if (diffDays < 0) return `${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? '' : 's'} overdue`;
+    return `Due in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  };
+
   const priorityClass = (priority) => {
     if (!priority) return '';
     const priorityValue = priority.toLowerCase();
@@ -75,9 +86,20 @@ function TicketsList({ tickets }) {
                   <p className="card-text"><small className="text-muted">Priority: {ticket.priority}</small></p>
                 )}
                 {ticket.dueDate && (
-                  <p className="card-text"><small className="text-muted">Due: {ticket.dueDate}</small></p>
+                  <p className="card-text">
+                    <small className="text-muted">Due: {ticket.dueDate} ({dueDeltaLabel(ticket.dueDate)})</small>
+                  </p>
                 )}
                 <p className="card-text"><small className="text-muted">Updated: {timeAgo(ticket.updated)}</small></p>
+                {ticket.latestComment ? (
+                  <p className="card-text">
+                    <small className="text-muted">Latest comment{ticket.latestComment.author ? ` by ${ticket.latestComment.author}` : ''} ({timeAgo(ticket.latestComment.created)}):</small>
+                    <br />
+                    <span className="latest-comment">{ticket.latestComment.body || 'No comment body available.'}</span>
+                  </p>
+                ) : (
+                  <p className="card-text"><small className="text-muted">No comments</small></p>
+                )}
                 <p className="card-text">
                   <img src={ticket.avatarUrl} alt={ticket.assignee} className="rounded-circle me-2" width="32" height="32" />
                   <small className="text-muted">Assignee: {ticket.assignee}</small>
