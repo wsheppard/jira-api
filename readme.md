@@ -58,8 +58,8 @@ Ensure you have an external Docker network named `docker_static`:
 docker network create docker_static
 ```
 
-Start the service via Docker Compose (it will build the image, attach it to `docker_static`, and expose port 8000):
+Start the service via Docker Compose (this repo uses `compose.yml`, so use the modern `docker compose` CLI):
 
 ```bash
-docker-compose up -d
+docker compose up -d --build
 ```
