@@ -82,6 +82,9 @@ function TicketsList({ tickets }) {
                     ))}
                   </p>
                 )}
+                <p className="card-text">
+                  <small className="text-muted">Status: {ticket.statusName} ({ticket.statusCategory})</small>
+                </p>
                 {ticket.priority && (
                   <p className="card-text"><small className="text-muted">Priority: {ticket.priority}</small></p>
                 )}

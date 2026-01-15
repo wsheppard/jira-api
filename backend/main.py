@@ -179,6 +179,8 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                 issuetype = (issue_fields.get("issuetype") or {}).get("name")
 
                 latest_comment = _latest_comment(issue_fields)
+                status = issue_fields.get("status") or {}
+                status_category = (status.get("statusCategory") or {}).get("name")
 
                 flattened.append(
                     {
@@ -194,6 +196,8 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                         "priority": priority,
                         "labels": issue_fields.get("labels", []),
                         "issuetype": issuetype,
+                        "statusName": status.get("name"),
+                        "statusCategory": status_category,
                         "latestComment": latest_comment,
                     }
                 )
