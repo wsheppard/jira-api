@@ -81,13 +81,75 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }
   }, []);
 
+  const summarizeErrorDetail = useCallback((detail) => {
+    if (detail == null) {
+      return '';
+    }
+    if (typeof detail === 'string') {
+      const trimmed = detail.trim();
+      if (!trimmed) {
+        return '';
+      }
+      try {
+        return summarizeErrorDetail(JSON.parse(trimmed));
+      } catch (parseError) {
+        return trimmed;
+      }
+    }
+    if (Array.isArray(detail)) {
+      return detail.map((entry) => summarizeErrorDetail(entry)).filter(Boolean).join('; ');
+    }
+    if (typeof detail === 'object') {
+      if (Array.isArray(detail.errorMessages) && detail.errorMessages.length > 0) {
+        return detail.errorMessages.join('; ');
+      }
+      if (detail.errors && typeof detail.errors === 'object') {
+        const values = Object.values(detail.errors).map((entry) => summarizeErrorDetail(entry)).filter(Boolean);
+        if (values.length > 0) {
+          return values.join('; ');
+        }
+      }
+      if (typeof detail.message === 'string') {
+        return detail.message;
+      }
+      try {
+        return JSON.stringify(detail);
+      } catch (stringifyError) {
+        return String(detail);
+      }
+    }
+    return String(detail);
+  }, []);
+
   const fetchJson = useCallback(async (endpoint) => {
-    const response = await fetch(`${API_BASE_URL}/${endpoint}`);
+    let response;
+    try {
+      response = await fetch(`${API_BASE_URL}/${endpoint}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected error while fetching data.';
+      const reason = message === 'Failed to fetch'
+        ? 'Network error or CORS issue while calling the API.'
+        : message;
+      throw new Error(`Failed to fetch ${endpoint}: ${reason}`);
+    }
     if (!response.ok) {
-      throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+      let detail = '';
+      try {
+        const body = await response.json();
+        detail = summarizeErrorDetail(body?.detail ?? body);
+      } catch (jsonError) {
+        try {
+          const text = await response.text();
+          detail = summarizeErrorDetail(text);
+        } catch (textError) {
+          detail = '';
+        }
+      }
+      const suffix = detail ? ` - ${detail}` : '';
+      throw new Error(`Request failed: ${response.status} ${response.statusText}${suffix}`);
     }
     return response.json();
-  }, []);
+  }, [summarizeErrorDetail]);
 
   const fetchViewData = useCallback(async (view) => {
     const config = VIEW_CONFIG[view];

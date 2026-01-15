@@ -12,6 +12,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.jira-www.rule=Host(`jira.dev.jjrsoftware.co.uk`)"
+      - "traefik.http.routers.jira-www.entrypoints=websecure"
+      - "traefik.http.routers.jira-www.tls=true"
       - "traefik.http.services.jira-www.loadbalancer.server.port=80"
 
   jira-api:
@@ -29,4 +31,6 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.jira-api.rule=Host(`jira.api.jjrsoftware.co.uk`)"
+      - "traefik.http.routers.jira-api.entrypoints=websecure"
+      - "traefik.http.routers.jira-api.tls=true"
       - "traefik.http.services.jira-api.loadbalancer.server.port=80"
