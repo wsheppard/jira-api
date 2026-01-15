@@ -67,11 +67,14 @@ function TicketsList({ tickets }) {
         <div className="tickets-grid__item" key={ticket.ticket}>
           <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-body">
             <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
-              <div className={`card-header ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
-                <span className="ticket-key d-block text-truncate">
+              <div className={`card-header d-flex align-items-center justify-content-between ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
+                <span className="ticket-key text-truncate">
                   <i className={`${getIssueTypeIcon(ticket.issuetype)} me-2`}></i>
                   {ticket.ticket}
                 </span>
+                <small className={`text-muted ${isOverdue(ticket.dueDate) ? 'text-white' : ''}`}>
+                  {ticket.statusName} ({ticket.statusCategory})
+                </small>
               </div>
               <div className="card-body">
                 <p className="card-text">{ticket.title}</p>
@@ -82,9 +85,6 @@ function TicketsList({ tickets }) {
                     ))}
                   </p>
                 )}
-                <p className="card-text">
-                  <small className="text-muted">Status: {ticket.statusName} ({ticket.statusCategory})</small>
-                </p>
                 {ticket.priority && (
                   <p className="card-text"><small className="text-muted">Priority: {ticket.priority}</small></p>
                 )}
