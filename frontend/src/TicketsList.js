@@ -72,9 +72,9 @@ function TicketsList({ tickets }) {
                   <i className={`${getIssueTypeIcon(ticket.issuetype)} me-2`}></i>
                   {ticket.ticket}
                 </span>
-                <small className={`text-muted ${isOverdue(ticket.dueDate) ? 'text-white' : ''}`}>
-                  {ticket.statusName} ({ticket.statusCategory})
-                </small>
+                <span className={`badge fs-6 ${isOverdue(ticket.dueDate) ? 'bg-light text-dark' : 'bg-secondary'}`}>
+                  {ticket.statusName}
+                </span>
               </div>
               <div className="card-body">
                 <p className="card-text">{ticket.title}</p>
