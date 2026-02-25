@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Xarrow, { Xwrapper } from 'react-xarrows';
 import TicketsList from './TicketsList';
 import PipelineDashboard from './PipelineDashboard';
 import './App.css';
@@ -365,6 +366,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
     ));
   };
 
+  const makeConnectorId = (groupKey, sha, suffix = '') =>
+    `${String(groupKey)}-${String(sha)}-${suffix}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -476,69 +480,85 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <span className="badge text-bg-light border">{group.commits.length} commits</span>
                       </div>
                       <ul className="list-group list-group-flush">
-                        {group.commits.map((commit) => {
+                        {group.commits.map((commit, commitIndex) => {
                           const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
+                          const parentId = makeConnectorId(group.key, commit.sha, `parent-${commitIndex}`);
                           return (
                             <li
                               key={`${group.key}-${commit.sha}`}
-                              className={`list-group-item ${hasNested ? 'merge-with-children' : ''}`}
+                              className="list-group-item"
                             >
-                              <div className={`commit-node ${hasNested ? 'merge-commit-head' : ''}`}>
-                                <div className="commit-hash-message">
-                                  <span className="commit-hash">
-                                    {commit.link ? (
-                                      <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                                        {commit.sha?.slice(0, 7) ?? 'unknown'}
-                                      </a>
-                                    ) : (
-                                      commit.sha?.slice(0, 7) ?? 'unknown'
-                                    )}
-                                  </span>
-                                  <span className="commit-message-text">{commit.message || 'No message'}</span>
-                                </div>
-                                <div className="commit-meta-row">
-                                  {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                                    <span>
-                                      {commit.tags.map((tag) => (
-                                        <span key={tag} className="badge text-bg-secondary me-1">
-                                          {tag}
-                                        </span>
-                                      ))}
+                              <Xwrapper>
+                                <div id={parentId} className="commit-node">
+                                  <div className="commit-hash-message">
+                                    <span className="commit-hash">
+                                      {commit.link ? (
+                                        <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                                          {commit.sha?.slice(0, 7) ?? 'unknown'}
+                                        </a>
+                                      ) : (
+                                        commit.sha?.slice(0, 7) ?? 'unknown'
+                                      )}
                                     </span>
+                                    <span className="commit-message-text">{commit.message || 'No message'}</span>
+                                  </div>
+                                  <div className="commit-meta-row">
+                                    {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                                      <span>
+                                        {commit.tags.map((tag) => (
+                                          <span key={tag} className="badge text-bg-secondary me-1">
+                                            {tag}
+                                          </span>
+                                        ))}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-muted small">
+                                    {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                                  </div>
+                                  {renderPrLinks(commit.prs) && (
+                                    <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
                                   )}
                                 </div>
-                                <div className="text-muted small">
-                                  {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
-                                </div>
-                                {renderPrLinks(commit.prs) && (
-                                  <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                                {hasNested && (
+                                  <ul className="list-group list-group-flush mt-2 nested-commit-list">
+                                    {commit.nested_commits.map((nested, nestedIndex) => {
+                                      const childId = makeConnectorId(group.key, nested.sha, `child-${commitIndex}-${nestedIndex}`);
+                                      return (
+                                        <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
+                                          <div id={childId} className="commit-node">
+                                            <div className="commit-hash-message">
+                                              <span className="commit-hash">
+                                                {nested.link ? (
+                                                  <a href={nested.link} target="_blank" rel="noopener noreferrer">
+                                                    {nested.sha?.slice(0, 7) ?? 'unknown'}
+                                                  </a>
+                                                ) : (
+                                                  nested.sha?.slice(0, 7) ?? 'unknown'
+                                                )}
+                                              </span>
+                                              <span className="commit-message-text">{nested.message || 'No message'}</span>
+                                            </div>
+                                            <div className="text-muted small">
+                                              {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
+                                            </div>
+                                          </div>
+                                          <Xarrow
+                                            start={parentId}
+                                            end={childId}
+                                            startAnchor="bottom"
+                                            endAnchor="left"
+                                            path="grid"
+                                            color="rgba(255, 193, 7, 0.6)"
+                                            strokeWidth={2}
+                                            showHead={false}
+                                          />
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
                                 )}
-                              </div>
-                              {hasNested && (
-                                <ul className="list-group list-group-flush mt-2 nested-commit-list">
-                                  {commit.nested_commits.map((nested) => (
-                                    <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
-                                      <div className="commit-node">
-                                        <div className="commit-hash-message">
-                                          <span className="commit-hash">
-                                            {nested.link ? (
-                                              <a href={nested.link} target="_blank" rel="noopener noreferrer">
-                                                {nested.sha?.slice(0, 7) ?? 'unknown'}
-                                              </a>
-                                            ) : (
-                                              nested.sha?.slice(0, 7) ?? 'unknown'
-                                            )}
-                                          </span>
-                                          <span className="commit-message-text">{nested.message || 'No message'}</span>
-                                        </div>
-                                        <div className="text-muted small">
-                                          {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
-                                        </div>
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
+                              </Xwrapper>
                             </li>
                           );
                         })}
