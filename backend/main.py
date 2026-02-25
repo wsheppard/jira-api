@@ -439,6 +439,7 @@ async def github_branch_commits(
     repo: str,
     base: str = "master",
     head: str = "codex/integration",
+    lite: bool = False,
 ) -> Dict[str, Any]:
     """Return commits on head that are not reachable from base using GitHub compare API."""
     pr_number_regexes = [
@@ -596,17 +597,18 @@ async def github_branch_commits(
             pr_numbers = extract_pr_numbers(raw_message)
             prs: List[Dict[str, str]] = []
             nested_commits: List[Dict[str, str]] = []
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if is_merge_commit(commit) and num in pr_commits_cache:
-                    nested_commits = pr_commits_cache[num]
+            if not lite:
+                for num in pr_numbers:
+                    if num not in pr_cache:
+                        pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                        if pr_detail:
+                            pr_cache[num] = pr_detail
+                    if num not in pr_commits_cache:
+                        pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
+                    if num in pr_cache:
+                        prs.append(pr_cache[num])
+                    if is_merge_commit(commit) and num in pr_commits_cache:
+                        nested_commits = pr_commits_cache[num]
             commits.append(
                 {
                     "sha": sha,
@@ -637,17 +639,18 @@ async def github_branch_commits(
             pr_numbers = extract_pr_numbers(raw_message)
             prs: List[Dict[str, str]] = []
             nested_commits: List[Dict[str, str]] = []
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if is_merge_commit(commit) and num in pr_commits_cache:
-                    nested_commits = pr_commits_cache[num]
+            if not lite:
+                for num in pr_numbers:
+                    if num not in pr_cache:
+                        pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                        if pr_detail:
+                            pr_cache[num] = pr_detail
+                    if num not in pr_commits_cache:
+                        pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
+                    if num in pr_cache:
+                        prs.append(pr_cache[num])
+                    if is_merge_commit(commit) and num in pr_commits_cache:
+                        nested_commits = pr_commits_cache[num]
             base_commits.append(
                 {
                     "sha": sha,
@@ -674,18 +677,19 @@ async def github_branch_commits(
         merge_base_prs: List[Dict[str, str]] = []
         merge_base_nested: List[Dict[str, str]] = []
         pr_numbers = extract_pr_numbers(merge_base_message)
-        async with httpx.AsyncClient() as pr_client:
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    merge_base_prs.append(pr_cache[num])
-                if is_merge_commit(merge_base_data) and num in pr_commits_cache:
-                    merge_base_nested = pr_commits_cache[num]
+        if not lite:
+            async with httpx.AsyncClient() as pr_client:
+                for num in pr_numbers:
+                    if num not in pr_cache:
+                        pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                        if pr_detail:
+                            pr_cache[num] = pr_detail
+                    if num not in pr_commits_cache:
+                        pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
+                    if num in pr_cache:
+                        merge_base_prs.append(pr_cache[num])
+                    if is_merge_commit(merge_base_data) and num in pr_commits_cache:
+                        merge_base_nested = pr_commits_cache[num]
         merge_base = {
             "sha": merge_base_sha,
             "date": merge_base_author.get("date"),
@@ -708,18 +712,19 @@ async def github_branch_commits(
         pr_numbers = extract_pr_numbers(raw_message)
         prs: List[Dict[str, str]] = []
         nested_commits: List[Dict[str, str]] = []
-        async with httpx.AsyncClient() as pr_client:
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if num in pr_commits_cache and base_data.get("parents") and len(base_data.get("parents")) > 1:
-                    nested_commits = pr_commits_cache[num]
+        if not lite:
+            async with httpx.AsyncClient() as pr_client:
+                for num in pr_numbers:
+                    if num not in pr_cache:
+                        pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                        if pr_detail:
+                            pr_cache[num] = pr_detail
+                    if num not in pr_commits_cache:
+                        pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
+                    if num in pr_cache:
+                        prs.append(pr_cache[num])
+                    if num in pr_commits_cache and base_data.get("parents") and len(base_data.get("parents")) > 1:
+                        nested_commits = pr_commits_cache[num]
         base_head["prs"] = prs
         base_head["nested_commits"] = nested_commits
         base_head["is_merge_commit"] = bool(base_data.get("parents") and len(base_data.get("parents")) > 1)
