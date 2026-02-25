@@ -445,9 +445,19 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     )}
                   </div>
                 </div>
-                {githubCompare && (
-                  <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
-                )}
+                <div className="d-flex align-items-center gap-2">
+                  <a
+                    href="https://github.com/palliativa/monorepo/pulls?q=is%3Aopen+is%3Apr+base%3Acodex%2Fintegration"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm btn-outline-primary"
+                  >
+                    Open PRs to codex/integration
+                  </a>
+                  {githubCompare && (
+                    <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
+                  )}
+                </div>
               </div>
               <div className="row g-3">
                 {buildCommitGroups().map((group) => (
