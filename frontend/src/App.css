@@ -84,3 +84,24 @@
   border-radius: 4px;
   padding: 4px 6px;
 }
+
+.nested-commit-list {
+  margin-left: 1rem;
+  padding-left: 1rem;
+  border-left: 2px solid rgba(255, 193, 7, 0.5);
+}
+
+.nested-commit-item {
+  position: relative;
+  padding-left: 1.25rem;
+}
+
+.nested-commit-item::before {
+  content: '';
+  position: absolute;
+  left: -1rem;
+  top: 1.15rem;
+  width: 0.75rem;
+  height: 2px;
+  background: rgba(255, 193, 7, 0.5);
+}

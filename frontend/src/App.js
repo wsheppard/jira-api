@@ -547,9 +547,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
                               )}
                               {Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0 && (
-                                <ul className="list-group list-group-flush mt-2">
+                                <ul className="list-group list-group-flush mt-2 nested-commit-list">
                                   {commit.nested_commits.map((nested) => (
-                                    <li key={`${commit.sha}-${nested.sha}`} className="list-group-item">
+                                    <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
                                       <div className="d-flex flex-wrap align-items-center gap-2">
                                         {nested.link ? (
                                           <a href={nested.link} target="_blank" rel="noopener noreferrer">
