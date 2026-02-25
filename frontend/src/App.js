@@ -379,6 +379,98 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </tr>
                   </thead>
                   <tbody>
+                    {githubCommits.map((commit) => (
+                      <tr key={commit.sha}>
+                        <td>
+                          {commit.link ? (
+                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                              {commit.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            commit.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                        </td>
+                        <td>{commit.message || 'No message'}</td>
+                        <td>
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
+                            commit.tags.map((tag) => (
+                              <span key={tag} className="badge text-bg-secondary me-1">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>{commit.author || 'Unknown'}</td>
+                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    ))}
+                    {githubCompare?.merge_base && (
+                      <tr className="table-light">
+                        <td colSpan="5" className="fw-semibold text-muted">Common ancestor</td>
+                      </tr>
+                    )}
+                    {githubCompare?.merge_base && (
+                      <tr className="table-warning">
+                        <td>
+                          {githubCompare.merge_base.link ? (
+                            <a href={githubCompare.merge_base.link} target="_blank" rel="noopener noreferrer">
+                              {githubCompare.merge_base.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            githubCompare.merge_base.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                          <span className="badge text-bg-dark ms-2">Common ancestor</span>
+                        </td>
+                        <td>{githubCompare.merge_base.message || 'No message'}</td>
+                        <td>
+                          {Array.isArray(githubCompare.merge_base.tags) && githubCompare.merge_base.tags.length > 0 ? (
+                            githubCompare.merge_base.tags.map((tag) => (
+                              <span key={tag} className="badge text-bg-secondary me-1">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>{githubCompare.merge_base.author || 'Unknown'}</td>
+                        <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    )}
+                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
+                      <tr className="table-light">
+                        <td colSpan="5" className="fw-semibold text-muted">Master-only commits</td>
+                      </tr>
+                    )}
+                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
+                      <tr key={`base-${commit.sha}`}>
+                        <td>
+                          {commit.link ? (
+                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                              {commit.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            commit.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                        </td>
+                        <td>{commit.message || 'No message'}</td>
+                        <td>
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
+                            commit.tags.map((tag) => (
+                              <span key={tag} className="badge text-bg-secondary me-1">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>{commit.author || 'Unknown'}</td>
+                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    ))}
                     {githubCompare?.base_head && (
                       <tr className="table-warning">
                         <td>
@@ -407,33 +499,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <td>{githubCompare.base_head.date ? new Date(githubCompare.base_head.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
                     )}
-                    {githubCommits.map((commit) => (
-                      <tr key={commit.sha}>
-                        <td>
-                          {commit.link ? (
-                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                              {commit.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            commit.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                        </td>
-                        <td>{commit.message || 'No message'}</td>
-                        <td>
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
-                            commit.tags.map((tag) => (
-                              <span key={tag} className="badge text-bg-secondary me-1">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted">—</span>
-                          )}
-                        </td>
-                        <td>{commit.author || 'Unknown'}</td>
-                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    ))}
                   </tbody>
                 </table>
               </div>

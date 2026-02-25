@@ -372,6 +372,16 @@ async def github_branch_commits(
 
     data = resp.json()
     commit_shas = [commit.get("sha") for commit in data.get("commits", []) if commit.get("sha")]
+    merge_base_data = data.get("merge_base_commit") or {}
+    merge_base_sha = merge_base_data.get("sha")
+    base_compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{head}...{base}"
+    async with httpx.AsyncClient() as client:
+        resp_base_compare = await client.get(base_compare_url, headers=headers)
+    if resp_base_compare.status_code != 200:
+        raise HTTPException(status_code=resp_base_compare.status_code, detail=resp_base_compare.text)
+    base_compare = resp_base_compare.json()
+    base_commits_raw = base_compare.get("commits", [])
+    base_commit_shas = [commit.get("sha") for commit in base_commits_raw if commit.get("sha")]
     base_head: Dict[str, Any] | None = None
     base_sha: str | None = None
     base_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{base}"
@@ -393,12 +403,15 @@ async def github_branch_commits(
         }
 
     tags_by_commit: Dict[str, List[str]] = {}
-    if commit_shas or base_sha:
+    if commit_shas or base_sha or base_commit_shas or merge_base_sha:
         tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
         page = 1
         remaining = set(commit_shas)
+        remaining.update(base_commit_shas)
         if base_sha:
             remaining.add(base_sha)
+        if merge_base_sha:
+            remaining.add(merge_base_sha)
         async with httpx.AsyncClient() as client:
             while remaining:
                 resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
@@ -434,6 +447,42 @@ async def github_branch_commits(
             }
         )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
+
+    base_commits: List[Dict[str, Any]] = []
+    for commit in base_commits_raw:
+        commit_info = commit.get("commit") or {}
+        author_info = commit_info.get("author") or {}
+        raw_message = commit_info.get("message") or ""
+        sha = commit.get("sha")
+        if not sha or sha == base_sha:
+            continue
+        base_commits.append(
+            {
+                "sha": sha,
+                "date": author_info.get("date"),
+                "author": author_info.get("name"),
+                "message": raw_message.split("\n")[0],
+                "link": commit.get("html_url"),
+                "tags": tags_by_commit.get(sha, []),
+            }
+        )
+    base_commits.sort(key=lambda item: item.get("date") or "", reverse=True)
+
+    merge_base: Dict[str, Any] | None = None
+    if merge_base_sha:
+        merge_base_info = merge_base_data.get("commit") or {}
+        merge_base_author = merge_base_info.get("author") or {}
+        merge_base_message = merge_base_info.get("message") or ""
+        merge_base = {
+            "sha": merge_base_sha,
+            "date": merge_base_author.get("date"),
+            "author": merge_base_author.get("name"),
+            "message": merge_base_message.split("\n")[0],
+            "link": merge_base_data.get("html_url"),
+            "tags": tags_by_commit.get(merge_base_sha, []),
+            "label": "common ancestor",
+        }
+
     if base_head and base_sha:
         base_head["tags"] = tags_by_commit.get(base_sha, [])
     return {
@@ -445,6 +494,8 @@ async def github_branch_commits(
         "behind_by": data.get("behind_by"),
         "total_commits": len(commits),
         "base_head": base_head,
+        "merge_base": merge_base,
+        "base_commits": base_commits,
         "commits": commits,
     }
 
