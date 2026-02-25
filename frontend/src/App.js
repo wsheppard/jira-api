@@ -378,6 +378,36 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </tr>
                   </thead>
                   <tbody>
+                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
+                      <tr className="table-light">
+                        <td colSpan="4" className="fw-semibold text-muted">Master-only commits</td>
+                      </tr>
+                    )}
+                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
+                      <tr key={`base-${commit.sha}`}>
+                        <td>
+                          {commit.link ? (
+                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                              {commit.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            commit.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                            <span className="ms-2">
+                              {commit.tags.map((tag) => (
+                                <span key={tag} className="badge text-bg-secondary me-1">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </td>
+                        <td>{commit.message || 'No message'}</td>
+                        <td>{commit.author || 'Unknown'}</td>
+                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    ))}
                     {githubCommits.map((commit) => (
                       <tr key={commit.sha}>
                         <td>
@@ -429,36 +459,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
                     )}
-                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
-                      <tr className="table-light">
-                        <td colSpan="4" className="fw-semibold text-muted">Master-only commits</td>
-                      </tr>
-                    )}
-                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
-                      <tr key={`base-${commit.sha}`}>
-                        <td>
-                          {commit.link ? (
-                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                              {commit.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            commit.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                            <span className="ms-2">
-                              {commit.tags.map((tag) => (
-                                <span key={tag} className="badge text-bg-secondary me-1">
-                                  {tag}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
-                        <td>{commit.message || 'No message'}</td>
-                        <td>{commit.author || 'Unknown'}</td>
-                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    ))}
                     {githubCompare?.base_head && (
                       <tr className="table-warning">
                         <td>
