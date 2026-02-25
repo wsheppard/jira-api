@@ -302,6 +302,18 @@ const [nextPollIn, setNextPollIn] = useState(30);
     ));
   };
 
+  const buildMasterCommits = () => {
+    const commits = Array.isArray(githubCompare?.base_commits) ? [...githubCompare.base_commits] : [];
+    if (githubCompare?.base_head) {
+      const exists = commits.some((item) => item.sha === githubCompare.base_head.sha);
+      if (!exists) {
+        commits.push({ ...githubCompare.base_head, label: 'master head' });
+      }
+    }
+    commits.sort((a, b) => (b?.date || '').localeCompare(a?.date || ''));
+    return commits;
+  };
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -398,12 +410,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
+                    {buildMasterCommits().length > 0 && (
                       <tr className="table-light">
                         <td colSpan="5" className="fw-semibold text-muted">Master-only commits</td>
                       </tr>
                     )}
-                    {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
+                    {buildMasterCommits().map((commit) => (
                       <tr key={`base-${commit.sha}`}>
                         <td>
                           {commit.link ? (
@@ -412,6 +424,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             </a>
                           ) : (
                             commit.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                          {commit.label === 'master head' && (
+                            <span className="badge text-bg-dark ms-2">Master head</span>
                           )}
                           {Array.isArray(commit.tags) && commit.tags.length > 0 && (
                             <span className="ms-2">
@@ -480,33 +495,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <td>{renderJiraLinks(githubCompare.merge_base.jira)}</td>
                         <td>{githubCompare.merge_base.author || 'Unknown'}</td>
                         <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    )}
-                    {githubCompare?.base_head && (
-                      <tr className="table-warning">
-                        <td>
-                          {githubCompare.base_head.link ? (
-                            <a href={githubCompare.base_head.link} target="_blank" rel="noopener noreferrer">
-                              {githubCompare.base_head.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            githubCompare.base_head.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                          <span className="badge text-bg-dark ms-2">Master head</span>
-                          {Array.isArray(githubCompare.base_head.tags) && githubCompare.base_head.tags.length > 0 && (
-                            <span className="ms-2">
-                              {githubCompare.base_head.tags.map((tag) => (
-                                <span key={tag} className="badge text-bg-secondary me-1">
-                                  {tag}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
-                        <td>{githubCompare.base_head.message || 'No message'}</td>
-                        <td>{renderJiraLinks(githubCompare.base_head.jira)}</td>
-                        <td>{githubCompare.base_head.author || 'Unknown'}</td>
-                        <td>{githubCompare.base_head.date ? new Date(githubCompare.base_head.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
                     )}
                   </tbody>
