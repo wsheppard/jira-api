@@ -415,11 +415,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       </tr>
                     ))}
                     {githubCompare?.merge_base && (
-                      <tr className="table-light">
-                        <td colSpan="4" className="fw-semibold text-muted">Common ancestor</td>
-                      </tr>
-                    )}
-                    {githubCompare?.merge_base && (
                       <tr className="table-warning">
                         <td>
                           {githubCompare.merge_base.link ? (
