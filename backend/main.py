@@ -245,27 +245,23 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
     return results
 
 
-async def fetch_commit_prs(
+async def fetch_pr_details(
     client: httpx.AsyncClient,
     headers: Dict[str, str],
     owner: str,
     repo: str,
-    sha: str,
-) -> List[Dict[str, str]]:
-    url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/pulls"
+    number: int,
+) -> Dict[str, str] | None:
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}"
     resp = await client.get(url, headers=headers)
     if resp.status_code != 200:
-        return []
-    prs = []
-    for pr in resp.json():
-        prs.append(
-            {
-                "number": pr.get("number"),
-                "title": pr.get("title") or "",
-                "link": pr.get("html_url") or "",
-            }
-        )
-    return prs
+        return None
+    data = resp.json()
+    return {
+        "number": data.get("number"),
+        "title": data.get("title") or "",
+        "link": data.get("html_url") or "",
+    }
 
 
 @app.get("/in-progress")
@@ -417,6 +413,29 @@ async def github_branch_commits(
     head: str = "codex/integration",
 ) -> Dict[str, Any]:
     """Return commits on head that are not reachable from base using GitHub compare API."""
+    pr_number_regexes = [
+        re.compile(r"merge pull request #(?P<num>\d+)", re.IGNORECASE),
+        re.compile(r"\(#(?P<num>\d+)\)"),
+    ]
+
+    def extract_pr_numbers(text: str | None) -> List[int]:
+        if not text:
+            return []
+        found: List[int] = []
+        for regex in pr_number_regexes:
+            for match in regex.finditer(text):
+                try:
+                    found.append(int(match.group("num")))
+                except (TypeError, ValueError):
+                    continue
+        seen: set[int] = set()
+        ordered: List[int] = []
+        for num in found:
+            if num not in seen:
+                ordered.append(num)
+                seen.add(num)
+        return ordered
+
     def extract_jira_keys(text: str | None) -> List[str]:
         if not text:
             return []
@@ -533,6 +552,7 @@ async def github_branch_commits(
                 page += 1
 
     commits: List[Dict[str, Any]] = []
+    pr_cache: Dict[int, Dict[str, str]] = {}
     async with httpx.AsyncClient() as pr_client:
         for commit in data.get("commits", []):
             commit_info = commit.get("commit") or {}
@@ -540,7 +560,15 @@ async def github_branch_commits(
             raw_message = commit_info.get("message") or ""
             sha = commit.get("sha")
             jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-            prs = await fetch_commit_prs(pr_client, headers, owner, repo, sha) if sha else []
+            pr_numbers = extract_pr_numbers(raw_message)
+            prs: List[Dict[str, str]] = []
+            for num in pr_numbers:
+                if num not in pr_cache:
+                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                    if pr_detail:
+                        pr_cache[num] = pr_detail
+                if num in pr_cache:
+                    prs.append(pr_cache[num])
             commits.append(
                 {
                     "sha": sha,
@@ -566,7 +594,15 @@ async def github_branch_commits(
             if not sha or sha == base_sha:
                 continue
             jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-            prs = await fetch_commit_prs(pr_client, headers, owner, repo, sha)
+            pr_numbers = extract_pr_numbers(raw_message)
+            prs: List[Dict[str, str]] = []
+            for num in pr_numbers:
+                if num not in pr_cache:
+                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                    if pr_detail:
+                        pr_cache[num] = pr_detail
+                if num in pr_cache:
+                    prs.append(pr_cache[num])
             base_commits.append(
                 {
                     "sha": sha,
@@ -588,8 +624,16 @@ async def github_branch_commits(
         merge_base_author = merge_base_info.get("author") or {}
         merge_base_message = merge_base_info.get("message") or ""
         jira_entries = build_jira_entries(extract_jira_keys(merge_base_message))
+        merge_base_prs: List[Dict[str, str]] = []
+        pr_numbers = extract_pr_numbers(merge_base_message)
         async with httpx.AsyncClient() as pr_client:
-            merge_base_prs = await fetch_commit_prs(pr_client, headers, owner, repo, merge_base_sha)
+            for num in pr_numbers:
+                if num not in pr_cache:
+                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                    if pr_detail:
+                        pr_cache[num] = pr_detail
+                if num in pr_cache:
+                    merge_base_prs.append(pr_cache[num])
         merge_base = {
             "sha": merge_base_sha,
             "date": merge_base_author.get("date"),
@@ -607,8 +651,17 @@ async def github_branch_commits(
         base_head["tags"] = tags_by_commit.get(base_sha, [])
         raw_message = (base_data.get("commit") or {}).get("message") or ""
         base_head["jira"] = build_jira_entries(extract_jira_keys(raw_message))
+        pr_numbers = extract_pr_numbers(raw_message)
+        prs: List[Dict[str, str]] = []
         async with httpx.AsyncClient() as pr_client:
-            base_head["prs"] = await fetch_commit_prs(pr_client, headers, owner, repo, base_sha)
+            for num in pr_numbers:
+                if num not in pr_cache:
+                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
+                    if pr_detail:
+                        pr_cache[num] = pr_detail
+                if num in pr_cache:
+                    prs.append(pr_cache[num])
+        base_head["prs"] = prs
         base_head["location"] = "master"
     return {
         "owner": owner,
