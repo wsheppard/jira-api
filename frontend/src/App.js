@@ -494,9 +494,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <ul className="list-group list-group-flush">
                         {group.commits.map((commit) => {
                           const highlight = commit.location !== 'codex';
+                          const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
                           return (
-                            <li key={`${group.key}-${commit.sha}`} className={`list-group-item ${highlight ? 'list-group-item-warning' : ''}`}>
-                              <div className="d-flex flex-wrap align-items-center gap-2">
+                            <li
+                              key={`${group.key}-${commit.sha}`}
+                              className={`list-group-item ${highlight ? 'list-group-item-warning' : ''} ${hasNested ? 'merge-with-children' : ''}`}
+                            >
+                              <div className={`d-flex flex-wrap align-items-center gap-2 ${hasNested ? 'merge-commit-head' : ''}`}>
                                 {commit.link ? (
                                   <a href={commit.link} target="_blank" rel="noopener noreferrer">
                                     {commit.sha?.slice(0, 7) ?? 'unknown'}
@@ -530,7 +534,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               {renderPrLinks(commit.prs) && (
                                 <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
                               )}
-                              {Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0 && (
+                              {hasNested && (
                                 <ul className="list-group list-group-flush mt-2 nested-commit-list">
                                   {commit.nested_commits.map((nested) => (
                                     <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
