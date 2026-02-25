@@ -416,7 +416,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       </tr>
                     )}
                     {buildMasterCommits().map((commit) => (
-                      <tr key={`base-${commit.sha}`}>
+                      <tr key={`base-${commit.sha}`} className="table-warning">
                         <td>
                           {commit.link ? (
                             <a href={commit.link} target="_blank" rel="noopener noreferrer">
