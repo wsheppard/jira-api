@@ -298,6 +298,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
           item.key
         )}
         {item.status ? <span className="text-muted"> ({item.status})</span> : null}
+        {item.summary ? (
+          <span className="badge text-bg-light border ms-2">{item.summary}</span>
+        ) : null}
       </span>
     ));
   };

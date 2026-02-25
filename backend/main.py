@@ -218,7 +218,7 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
     if not keys:
         return {}
     unique_keys = sorted(set(keys))
-    fields = ["status", "key"]
+    fields = ["status", "summary", "key"]
     jql = f"key in ({', '.join(unique_keys)})"
     headers = {"Content-Type": "application/json"}
     cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
@@ -232,11 +232,14 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
     results: Dict[str, Dict[str, str]] = {}
     for issue in resp.json().get("issues", []):
         key = issue.get("key")
-        status = (issue.get("fields", {}).get("status") or {}).get("name")
+        fields_data = issue.get("fields", {}) or {}
+        status = (fields_data.get("status") or {}).get("name")
+        summary = fields_data.get("summary") or ""
         if key:
             results[key] = {
                 "key": key,
                 "status": status or "",
+                "summary": summary,
                 "link": f"{cfg['base_url'].rstrip('/')}/browse/{key}",
             }
     return results
