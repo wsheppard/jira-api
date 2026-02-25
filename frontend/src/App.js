@@ -293,14 +293,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
         {item.link ? (
           <a href={item.link} target="_blank" rel="noopener noreferrer">
             {item.key}
+            {item.summary ? ` — ${item.summary}` : ''}
           </a>
         ) : (
-          item.key
+          `${item.key}${item.summary ? ` — ${item.summary}` : ''}`
         )}
-        {item.status ? <span className="text-muted"> ({item.status})</span> : null}
-        {item.summary ? (
-          <span className="badge text-bg-light border ms-2">{item.summary}</span>
-        ) : null}
+        {item.status ? <span className="badge text-bg-secondary ms-2">{item.status}</span> : null}
       </span>
     ));
   };
