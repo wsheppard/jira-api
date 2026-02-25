@@ -267,6 +267,36 @@ async def recently_updated():
     return tickets
 
 
+@app.get("/codex-enrich")
+async def codex_enrich():
+    """Tickets tagged for Codex enrichment across Jira instances."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = 'labels in ("codex:enrich", "codex:enriched")'
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)
+    return tickets
+
+
+@app.get("/codex-more-info")
+async def codex_more_info():
+    """Tickets tagged for additional Codex info across Jira instances."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = 'labels = "codex:more-info"'
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)
+    return tickets
+
+
+@app.get("/codex-implemented")
+async def codex_implemented():
+    """Tickets tagged as implemented by Codex across Jira instances."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype"]
+    jql = 'labels = "codex:implemented"'
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)
+    return tickets
+
+
 # ---------------------------------------------------------------------------
 # Bitbucket helpers
 # ---------------------------------------------------------------------------

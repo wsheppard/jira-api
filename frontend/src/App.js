@@ -11,10 +11,13 @@ const VIEW_CONFIG = {
   backlog: { label: 'Backlog', endpoint: 'backlog', type: 'tickets' },
   managerMeeting: { label: 'Manager Meeting', endpoint: 'manager-meeting', type: 'tickets' },
   recentActivity: { label: 'Updated Last 72h (excl. last 30m)', endpoint: 'recently-updated', type: 'tickets' },
+  codexEnrich: { label: 'Codex Enrich / Enriched', endpoint: 'codex-enrich', type: 'tickets' },
+  codexMoreInfo: { label: 'Codex More Info', endpoint: 'codex-more-info', type: 'tickets' },
+  codexImplemented: { label: 'Codex Implemented', endpoint: 'codex-implemented', type: 'tickets' },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
 
-const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'recentActivity', 'pipeline'];
+const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'recentActivity', 'codexEnrich', 'codexMoreInfo', 'codexImplemented', 'pipeline'];
 const DEFAULT_VIEW = 'open';
 
 const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
@@ -59,6 +62,9 @@ function App() {
     backlog: [],
     managerMeeting: [],
     recentActivity: [],
+    codexEnrich: [],
+    codexMoreInfo: [],
+    codexImplemented: [],
   });
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
