@@ -440,7 +440,7 @@ async def github_branch_commits(
     base: str = "master",
     head: str = "codex/integration",
 ) -> Dict[str, Any]:
-    """Return commits on head that are not reachable from base using GitHub compare API."""
+    """Return commits on codex/integration that are not reachable from base."""
     pr_number_regexes = [
         re.compile(r"merge pull request #(?P<num>\d+)", re.IGNORECASE),
         re.compile(r"\(#(?P<num>\d+)\)"),
@@ -480,48 +480,27 @@ async def github_branch_commits(
                 seen.add(key)
         return ordered
 
-    url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {github_token}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    head_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head}"
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, headers=headers)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        compare_resp = await client.get(compare_url, headers=headers)
+        head_resp = await client.get(head_url, headers=headers)
+    if compare_resp.status_code != 200:
+        raise HTTPException(status_code=compare_resp.status_code, detail=compare_resp.text)
+    if head_resp.status_code != 200:
+        raise HTTPException(status_code=head_resp.status_code, detail=head_resp.text)
 
-    data = resp.json()
-    commit_shas = [commit.get("sha") for commit in data.get("commits", []) if commit.get("sha")]
-    merge_base_data = data.get("merge_base_commit") or {}
-    merge_base_sha = merge_base_data.get("sha")
-    base_compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{head}...{base}"
-    async with httpx.AsyncClient() as client:
-        resp_base_compare = await client.get(base_compare_url, headers=headers)
-    if resp_base_compare.status_code != 200:
-        raise HTTPException(status_code=resp_base_compare.status_code, detail=resp_base_compare.text)
-    base_compare = resp_base_compare.json()
-    base_commits_raw = base_compare.get("commits", [])
-    base_commit_shas = [commit.get("sha") for commit in base_commits_raw if commit.get("sha")]
-    base_head: Dict[str, Any] | None = None
-    base_sha: str | None = None
-    base_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{base}"
-    async with httpx.AsyncClient() as client:
-        resp_base = await client.get(base_url, headers=headers)
-    if resp_base.status_code == 200:
-        base_data = resp_base.json()
-        base_sha = base_data.get("sha")
-        base_info = base_data.get("commit") or {}
-        base_author = base_info.get("author") or {}
-        base_message = base_info.get("message") or ""
-        base_head = {
-            "sha": base_sha,
-            "date": base_author.get("date"),
-            "author": base_author.get("name"),
-            "message": base_message.split("\n")[0],
-            "link": base_data.get("html_url"),
-            "label": "master head",
-        }
+    data = compare_resp.json()
+    head_sha = head_resp.json().get("sha")
+    commits_raw = data.get("commits", [])
+    commit_shas = [commit.get("sha") for commit in commits_raw if commit.get("sha")]
+    if head_sha and head_sha not in commit_shas:
+        commit_shas.append(head_sha)
 
     jira_base_url = ""
     palliativa_cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
@@ -529,19 +508,9 @@ async def github_branch_commits(
         jira_base_url = palliativa_cfg.get("base_url", "").rstrip("/")
 
     jira_keys: List[str] = []
-    for commit in data.get("commits", []):
+    for commit in commits_raw:
         raw_message = (commit.get("commit") or {}).get("message") or ""
         jira_keys.extend(extract_jira_keys(raw_message))
-    for commit in base_commits_raw:
-        raw_message = (commit.get("commit") or {}).get("message") or ""
-        jira_keys.extend(extract_jira_keys(raw_message))
-    if merge_base_data:
-        raw_message = (merge_base_data.get("commit") or {}).get("message") or ""
-        jira_keys.extend(extract_jira_keys(raw_message))
-    if base_head:
-        raw_message = (base_data.get("commit") or {}).get("message") or ""
-        jira_keys.extend(extract_jira_keys(raw_message))
-
     jira_lookup = await fetch_jira_statuses(jira_keys)
 
     def build_jira_entries(keys: List[str]) -> List[Dict[str, str]]:
@@ -557,17 +526,12 @@ async def github_branch_commits(
 
     tags_by_commit: Dict[str, List[str]] = {}
     latest_tag: str | None = None
-    if commit_shas or base_sha or base_commit_shas or merge_base_sha:
+    if commit_shas:
         tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
-        page = 1
         remaining = set(commit_shas)
-        remaining.update(base_commit_shas)
-        if base_sha:
-            remaining.add(base_sha)
-        if merge_base_sha:
-            remaining.add(merge_base_sha)
+        page = 1
         async with httpx.AsyncClient() as client:
-            while remaining:
+            while remaining or latest_tag is None:
                 resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
                 if resp_t.status_code != 200:
                     raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
@@ -579,18 +543,18 @@ async def github_branch_commits(
                     tag_commit = (tag.get("commit") or {}).get("sha")
                     if not tag_name or not tag_commit:
                         continue
-                    if latest_tag is None:
-                        latest_tag = tag_name
                     tags_by_commit.setdefault(tag_commit, []).append(tag_name)
                     if tag_commit in remaining:
                         remaining.discard(tag_commit)
+                    if head_sha and tag_commit == head_sha and latest_tag is None:
+                        latest_tag = tag_name
                 page += 1
 
     commits: List[Dict[str, Any]] = []
     pr_cache: Dict[int, Dict[str, str]] = {}
     pr_commits_cache: Dict[int, List[Dict[str, str]]] = {}
     async with httpx.AsyncClient() as pr_client:
-        for commit in data.get("commits", []):
+        for commit in commits_raw:
             commit_info = commit.get("commit") or {}
             author_info = commit_info.get("author") or {}
             raw_message = commit_info.get("message") or ""
@@ -622,111 +586,10 @@ async def github_branch_commits(
                     "prs": prs,
                     "nested_commits": nested_commits,
                     "is_merge_commit": is_merge_commit(commit),
-                    "location": "codex",
                 }
             )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
 
-    base_commits: List[Dict[str, Any]] = []
-    async with httpx.AsyncClient() as pr_client:
-        for commit in base_commits_raw:
-            commit_info = commit.get("commit") or {}
-            author_info = commit_info.get("author") or {}
-            raw_message = commit_info.get("message") or ""
-            sha = commit.get("sha")
-            if not sha or sha == base_sha:
-                continue
-            jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-            pr_numbers = extract_pr_numbers(raw_message)
-            prs: List[Dict[str, str]] = []
-            nested_commits: List[Dict[str, str]] = []
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if is_merge_commit(commit) and num in pr_commits_cache:
-                    nested_commits = pr_commits_cache[num]
-            base_commits.append(
-                {
-                    "sha": sha,
-                    "date": author_info.get("date"),
-                    "author": author_info.get("name"),
-                    "message": raw_message.split("\n")[0],
-                    "link": commit.get("html_url"),
-                    "tags": tags_by_commit.get(sha, []),
-                    "jira": jira_entries,
-                    "prs": prs,
-                    "nested_commits": nested_commits,
-                    "is_merge_commit": is_merge_commit(commit),
-                    "location": "master",
-                }
-            )
-    base_commits.sort(key=lambda item: item.get("date") or "", reverse=True)
-
-    merge_base: Dict[str, Any] | None = None
-    if merge_base_sha:
-        merge_base_info = merge_base_data.get("commit") or {}
-        merge_base_author = merge_base_info.get("author") or {}
-        merge_base_message = merge_base_info.get("message") or ""
-        jira_entries = build_jira_entries(extract_jira_keys(merge_base_message))
-        merge_base_prs: List[Dict[str, str]] = []
-        merge_base_nested: List[Dict[str, str]] = []
-        pr_numbers = extract_pr_numbers(merge_base_message)
-        async with httpx.AsyncClient() as pr_client:
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    merge_base_prs.append(pr_cache[num])
-                if is_merge_commit(merge_base_data) and num in pr_commits_cache:
-                    merge_base_nested = pr_commits_cache[num]
-        merge_base = {
-            "sha": merge_base_sha,
-            "date": merge_base_author.get("date"),
-            "author": merge_base_author.get("name"),
-            "message": merge_base_message.split("\n")[0],
-            "link": merge_base_data.get("html_url"),
-            "tags": tags_by_commit.get(merge_base_sha, []),
-            "label": "common ancestor",
-            "jira": jira_entries,
-            "prs": merge_base_prs,
-            "nested_commits": merge_base_nested,
-            "is_merge_commit": is_merge_commit(merge_base_data),
-            "location": "common",
-        }
-
-    if base_head and base_sha:
-        base_head["tags"] = tags_by_commit.get(base_sha, [])
-        raw_message = (base_data.get("commit") or {}).get("message") or ""
-        base_head["jira"] = build_jira_entries(extract_jira_keys(raw_message))
-        pr_numbers = extract_pr_numbers(raw_message)
-        prs: List[Dict[str, str]] = []
-        nested_commits: List[Dict[str, str]] = []
-        async with httpx.AsyncClient() as pr_client:
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if num in pr_commits_cache and base_data.get("parents") and len(base_data.get("parents")) > 1:
-                    nested_commits = pr_commits_cache[num]
-        base_head["prs"] = prs
-        base_head["nested_commits"] = nested_commits
-        base_head["is_merge_commit"] = bool(base_data.get("parents") and len(base_data.get("parents")) > 1)
-        base_head["location"] = "master"
     return {
         "owner": owner,
         "repo": repo,
@@ -736,9 +599,6 @@ async def github_branch_commits(
         "behind_by": data.get("behind_by"),
         "latest_tag": latest_tag,
         "total_commits": len(commits),
-        "base_head": base_head,
-        "merge_base": merge_base,
-        "base_commits": base_commits,
         "commits": commits,
     }
 

@@ -285,18 +285,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return () => clearInterval(interval);
   }, []);
 
-  const buildMasterCommits = () => {
-    const commits = Array.isArray(githubCompare?.base_commits) ? [...githubCompare.base_commits] : [];
-    if (githubCompare?.base_head) {
-      const exists = commits.some((item) => item.sha === githubCompare.base_head.sha);
-      if (!exists) {
-        commits.push({ ...githubCompare.base_head, label: 'master head' });
-      }
-    }
-    commits.sort((a, b) => (b?.date || '').localeCompare(a?.date || ''));
-    return commits;
-  };
-
   const buildCommitGroups = () => {
     const groups = new Map();
     const noJiraKey = 'NO-JIRA';
@@ -323,11 +311,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       jiraItems.forEach((jiraItem) => addToGroup(jiraItem.key, jiraItem, commit));
     };
 
-    buildMasterCommits().forEach(addCommit);
     githubCommits.forEach(addCommit);
-    if (githubCompare?.merge_base) {
-      addCommit(githubCompare.merge_base);
-    }
 
     const groupList = Array.from(groups.values());
     groupList.forEach((group) => {
@@ -460,11 +444,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <span className="badge text-bg-secondary">Latest tag: {githubCompare.latest_tag}</span>
                     )}
                   </div>
-                  {githubCompare && (
-                    <small className="text-muted">
-                      {githubCompare.base} → {githubCompare.head} · Ahead {githubCompare.ahead_by ?? 0} · Behind {githubCompare.behind_by ?? 0}
-                    </small>
-                  )}
                 </div>
                 {githubCompare && (
                   <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
@@ -498,12 +477,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       </div>
                       <ul className="list-group list-group-flush">
                         {group.commits.map((commit) => {
-                          const highlight = commit.location !== 'codex';
                           const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
                           return (
                             <li
                               key={`${group.key}-${commit.sha}`}
-                              className={`list-group-item ${highlight ? 'list-group-item-warning' : ''} ${hasNested ? 'merge-with-children' : ''}`}
+                              className={`list-group-item ${hasNested ? 'merge-with-children' : ''}`}
                             >
                               <div className={`commit-node ${hasNested ? 'merge-commit-head' : ''}`}>
                                 <div className="commit-hash-message">
@@ -519,12 +497,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                   <span className="commit-message-text">{commit.message || 'No message'}</span>
                                 </div>
                                 <div className="commit-meta-row">
-                                  {commit.label === 'master head' && (
-                                    <span className="badge text-bg-dark">Master head</span>
-                                  )}
-                                  {commit.location === 'common' && (
-                                    <span className="badge text-bg-dark">Common ancestor</span>
-                                  )}
                                   {Array.isArray(commit.tags) && commit.tags.length > 0 && (
                                     <span>
                                       {commit.tags.map((tag) => (
