@@ -284,25 +284,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return () => clearInterval(interval);
   }, []);
 
-  const renderJiraLinks = (items) => {
-    if (!Array.isArray(items) || items.length === 0) {
-      return null;
-    }
-    return items.map((item, index) => (
-      <span key={`${item.key}-${index}`} className="me-2">
-        {item.link ? (
-          <a href={item.link} target="_blank" rel="noopener noreferrer">
-            {item.key}
-            {item.summary ? ` — ${item.summary}` : ''}
-          </a>
-        ) : (
-          `${item.key}${item.summary ? ` — ${item.summary}` : ''}`
-        )}
-        {item.status ? <span className="badge text-bg-secondary ms-2">{item.status}</span> : null}
-      </span>
-    ));
-  };
-
   const buildMasterCommits = () => {
     const commits = Array.isArray(githubCompare?.base_commits) ? [...githubCompare.base_commits] : [];
     if (githubCompare?.base_head) {
