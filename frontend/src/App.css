@@ -85,6 +85,42 @@
   padding: 4px 6px;
 }
 
+.commit-tree {
+  position: relative;
+}
+
+.commit-parent-row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.35rem;
+}
+
+.connector-lane {
+  position: relative;
+}
+
+.connector-dot {
+  position: absolute;
+  top: 0.56rem;
+  left: 0.55rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 193, 7, 0.9);
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.connector-lane.has-children::after {
+  content: '';
+  position: absolute;
+  left: 0.75rem;
+  top: 1rem;
+  bottom: -0.8rem;
+  width: 2px;
+  background: rgba(255, 193, 7, 0.55);
+  border-radius: 999px;
+}
+
 .commit-node {
   position: relative;
   z-index: 2;
@@ -115,10 +151,39 @@
 }
 
 .nested-commit-list {
-  margin-left: 1rem;
+  margin-left: 0;
   padding-left: 0;
 }
 
 .nested-commit-item {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.35rem;
   padding-left: 0;
+}
+
+.nested-commit-item .connector-lane::before {
+  content: '';
+  position: absolute;
+  left: 0.75rem;
+  top: -0.9rem;
+  bottom: -0.9rem;
+  width: 2px;
+  background: rgba(255, 193, 7, 0.55);
+  border-radius: 999px;
+}
+
+.nested-commit-item .connector-lane::after {
+  content: '';
+  position: absolute;
+  left: 0.75rem;
+  top: calc(50% - 1px);
+  width: 0.85rem;
+  height: 2px;
+  background: rgba(255, 193, 7, 0.55);
+  border-radius: 999px;
+}
+
+.nested-commit-item.is-last .connector-lane::before {
+  bottom: calc(50% - 1px);
 }
