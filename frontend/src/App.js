@@ -514,9 +514,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 {commit.location === 'common' && (
                                   <span className="badge text-bg-dark">Common ancestor</span>
                                 )}
-                                {commit.is_merge_commit && (
-                                  <span className="badge text-bg-info">Merge commit</span>
-                                )}
                                 {Array.isArray(commit.tags) && commit.tags.length > 0 && (
                                   <span className="ms-1">
                                     {commit.tags.map((tag) => (
