@@ -90,7 +90,6 @@ function App() {
   const [errorMessage, setErrorMessage] = useState('');
 const [nextPollIn, setNextPollIn] = useState(30);
   const pendingRequests = useRef(0);
-  const githubRequestId = useRef(0);
   const groupOrderRef = useRef(new Map());
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
@@ -186,7 +185,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
     markRequestStart();
     setErrorMessage('');
-    let handledEnd = false;
     try {
       if (config.type === 'pipeline') {
         const data = await fetchJson(config.endpoint);
@@ -198,28 +196,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
           setPipelineCategories([]);
         }
       } else if (config.type === 'githubCommits') {
-        const requestId = githubRequestId.current + 1;
-        githubRequestId.current = requestId;
-        const liteEndpoint = config.endpoint.includes('?')
-          ? `${config.endpoint}&lite=1`
-          : `${config.endpoint}?lite=1`;
-        const liteData = await fetchJson(liteEndpoint);
-        if (githubRequestId.current === requestId) {
-          setGithubCommits(Array.isArray(liteData?.commits) ? liteData.commits : []);
-          setGithubCompare(liteData ?? null);
-        }
-        markRequestEnd();
-        handledEnd = true;
-        try {
-          const fullData = await fetchJson(config.endpoint);
-          if (githubRequestId.current === requestId) {
-            setGithubCommits(Array.isArray(fullData?.commits) ? fullData.commits : []);
-            setGithubCompare(fullData ?? null);
-          }
-        } catch (fullError) {
-          console.error('Failed to load full GitHub commit data:', fullError);
-        }
-        return;
+        const data = await fetchJson(config.endpoint);
+        setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
+        setGithubCompare(data ?? null);
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -232,9 +211,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const message = error instanceof Error ? error.message : 'Unexpected error while fetching data.';
       setErrorMessage(message);
     } finally {
-      if (!handledEnd) {
-        markRequestEnd();
-      }
+      markRequestEnd();
     }
   }, [fetchJson, markRequestEnd, markRequestStart]);
 
