@@ -399,17 +399,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           )}
                         </td>
                         <td>{commit.message || 'No message'}</td>
-                        <td>
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
-                            commit.tags.map((tag) => (
-                              <span key={tag} className="badge text-bg-secondary me-1">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted">—</span>
-                          )}
-                        </td>
                         <td>{commit.author || 'Unknown'}</td>
                         <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
