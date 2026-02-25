@@ -373,7 +373,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     <tr>
                       <th scope="col">Commit</th>
                       <th scope="col">Message</th>
-                      <th scope="col">Tags</th>
                       <th scope="col">Author</th>
                       <th scope="col">Date</th>
                     </tr>
@@ -389,6 +388,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           ) : (
                             commit.sha?.slice(0, 7) ?? 'unknown'
                           )}
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                            <span className="ms-2">
+                              {commit.tags.map((tag) => (
+                                <span key={tag} className="badge text-bg-secondary me-1">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                         </td>
                         <td>{commit.message || 'No message'}</td>
                         <td>
@@ -408,7 +416,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     ))}
                     {githubCompare?.merge_base && (
                       <tr className="table-light">
-                        <td colSpan="5" className="fw-semibold text-muted">Common ancestor</td>
+                        <td colSpan="4" className="fw-semibold text-muted">Common ancestor</td>
                       </tr>
                     )}
                     {githubCompare?.merge_base && (
@@ -422,26 +430,24 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             githubCompare.merge_base.sha?.slice(0, 7) ?? 'unknown'
                           )}
                           <span className="badge text-bg-dark ms-2">Common ancestor</span>
-                        </td>
-                        <td>{githubCompare.merge_base.message || 'No message'}</td>
-                        <td>
-                          {Array.isArray(githubCompare.merge_base.tags) && githubCompare.merge_base.tags.length > 0 ? (
-                            githubCompare.merge_base.tags.map((tag) => (
-                              <span key={tag} className="badge text-bg-secondary me-1">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted">—</span>
+                          {Array.isArray(githubCompare.merge_base.tags) && githubCompare.merge_base.tags.length > 0 && (
+                            <span className="ms-2">
+                              {githubCompare.merge_base.tags.map((tag) => (
+                                <span key={tag} className="badge text-bg-secondary me-1">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
                           )}
                         </td>
+                        <td>{githubCompare.merge_base.message || 'No message'}</td>
                         <td>{githubCompare.merge_base.author || 'Unknown'}</td>
                         <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
                     )}
                     {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
                       <tr className="table-light">
-                        <td colSpan="5" className="fw-semibold text-muted">Master-only commits</td>
+                        <td colSpan="4" className="fw-semibold text-muted">Master-only commits</td>
                       </tr>
                     )}
                     {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
@@ -454,19 +460,17 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           ) : (
                             commit.sha?.slice(0, 7) ?? 'unknown'
                           )}
-                        </td>
-                        <td>{commit.message || 'No message'}</td>
-                        <td>
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
-                            commit.tags.map((tag) => (
-                              <span key={tag} className="badge text-bg-secondary me-1">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted">—</span>
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                            <span className="ms-2">
+                              {commit.tags.map((tag) => (
+                                <span key={tag} className="badge text-bg-secondary me-1">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
                           )}
                         </td>
+                        <td>{commit.message || 'No message'}</td>
                         <td>{commit.author || 'Unknown'}</td>
                         <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
@@ -482,19 +486,17 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             githubCompare.base_head.sha?.slice(0, 7) ?? 'unknown'
                           )}
                           <span className="badge text-bg-dark ms-2">Master head</span>
-                        </td>
-                        <td>{githubCompare.base_head.message || 'No message'}</td>
-                        <td>
-                          {Array.isArray(githubCompare.base_head.tags) && githubCompare.base_head.tags.length > 0 ? (
-                            githubCompare.base_head.tags.map((tag) => (
-                              <span key={tag} className="badge text-bg-secondary me-1">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted">—</span>
+                          {Array.isArray(githubCompare.base_head.tags) && githubCompare.base_head.tags.length > 0 && (
+                            <span className="ms-2">
+                              {githubCompare.base_head.tags.map((tag) => (
+                                <span key={tag} className="badge text-bg-secondary me-1">
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
                           )}
                         </td>
+                        <td>{githubCompare.base_head.message || 'No message'}</td>
                         <td>{githubCompare.base_head.author || 'Unknown'}</td>
                         <td>{githubCompare.base_head.date ? new Date(githubCompare.base_head.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
