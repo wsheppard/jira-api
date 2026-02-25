@@ -5,6 +5,38 @@ function TicketsList({ tickets }) {
     return <p className="text-muted fst-italic">No tickets to display.</p>;
   }
 
+  const jiraKeyRegex = /\b([A-Z][A-Z0-9]+-\d+)\b/g;
+  const jiraKeyTokenRegex = /^[A-Z][A-Z0-9]+-\d+$/;
+
+  const extractBaseUrl = (ticketLink) => {
+    if (!ticketLink) return '';
+    try {
+      return new URL(ticketLink).origin;
+    } catch (error) {
+      return '';
+    }
+  };
+
+  const linkifyJiraKeys = (text, baseUrl) => {
+    if (!text) return text;
+    const parts = text.split(jiraKeyRegex);
+    return parts.map((part, index) => {
+      if (baseUrl && jiraKeyTokenRegex.test(part)) {
+        return (
+          <a
+            key={`${part}-${index}`}
+            href={`${baseUrl}/browse/${part}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {part}
+          </a>
+        );
+      }
+      return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
+    });
+  };
+
   const timeAgo = (dateString) => {
     if (!dateString) return '';
     const now = new Date();
@@ -63,21 +95,24 @@ function TicketsList({ tickets }) {
 
   return (
     <div className="tickets-grid mb-5">
-      {tickets.map(ticket => (
-        <div className="tickets-grid__item" key={ticket.ticket}>
-          <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-body">
+      {tickets.map(ticket => {
+        const baseUrl = extractBaseUrl(ticket.link);
+        return (
+          <div className="tickets-grid__item" key={ticket.ticket}>
             <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
               <div className={`card-header d-flex align-items-center justify-content-between ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
                 <span className="ticket-key text-truncate">
                   <i className={`${getIssueTypeIcon(ticket.issuetype)} me-2`}></i>
-                  {ticket.ticket}
+                  <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="text-decoration-none text-reset">
+                    {ticket.ticket}
+                  </a>
                 </span>
                 <span className={`badge fs-6 ${isOverdue(ticket.dueDate) ? 'bg-light text-dark' : 'bg-secondary'}`}>
                   {ticket.statusName}
                 </span>
               </div>
               <div className="card-body">
-                <p className="card-text">{ticket.title}</p>
+                <p className="card-text">{linkifyJiraKeys(ticket.title, baseUrl)}</p>
                 {ticket.labels && ticket.labels.length > 0 && (
                   <p className="card-text">
                     {ticket.labels.map(label => (
@@ -98,7 +133,7 @@ function TicketsList({ tickets }) {
                   <p className="card-text">
                     <small className="text-muted">Latest comment{ticket.latestComment.author ? ` by ${ticket.latestComment.author}` : ''} ({timeAgo(ticket.latestComment.created)}):</small>
                     <br />
-                    <span className="latest-comment">{ticket.latestComment.body || 'No comment body available.'}</span>
+                    <span className="latest-comment">{linkifyJiraKeys(ticket.latestComment.body || 'No comment body available.', baseUrl)}</span>
                   </p>
                 ) : (
                   <p className="card-text"><small className="text-muted">No comments</small></p>
@@ -109,9 +144,9 @@ function TicketsList({ tickets }) {
                 </p>
               </div>
             </div>
-          </a>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
