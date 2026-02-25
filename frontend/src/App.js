@@ -500,33 +500,35 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               key={`${group.key}-${commit.sha}`}
                               className={`list-group-item ${highlight ? 'list-group-item-warning' : ''} ${hasNested ? 'merge-with-children' : ''}`}
                             >
-                              <div className={`d-flex flex-wrap align-items-center gap-2 ${hasNested ? 'merge-commit-head' : ''}`}>
-                                {commit.link ? (
-                                  <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                                    {commit.sha?.slice(0, 7) ?? 'unknown'}
-                                  </a>
-                                ) : (
-                                  commit.sha?.slice(0, 7) ?? 'unknown'
-                                )}
-                                {commit.label === 'master head' && (
-                                  <span className="badge text-bg-dark">Master head</span>
-                                )}
-                                {commit.location === 'common' && (
-                                  <span className="badge text-bg-dark">Common ancestor</span>
-                                )}
-                                {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                                  <span className="ms-1">
-                                    {commit.tags.map((tag) => (
-                                      <span key={tag} className="badge text-bg-secondary me-1">
-                                        {tag}
-                                      </span>
-                                    ))}
-                                  </span>
-                                )}
-                              </div>
-                              <div>{commit.message || 'No message'}</div>
-                              <div className="text-muted small">
-                                {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                              <div className="commit-summary">
+                                <div className={`d-flex flex-wrap align-items-center gap-2 ${hasNested ? 'merge-commit-head' : ''}`}>
+                                  {commit.link ? (
+                                    <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                                      {commit.sha?.slice(0, 7) ?? 'unknown'}
+                                    </a>
+                                  ) : (
+                                    commit.sha?.slice(0, 7) ?? 'unknown'
+                                  )}
+                                  {commit.label === 'master head' && (
+                                    <span className="badge text-bg-dark">Master head</span>
+                                  )}
+                                  {commit.location === 'common' && (
+                                    <span className="badge text-bg-dark">Common ancestor</span>
+                                  )}
+                                  {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                                    <span className="ms-1">
+                                      {commit.tags.map((tag) => (
+                                        <span key={tag} className="badge text-bg-secondary me-1">
+                                          {tag}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  )}
+                                </div>
+                                <div>{commit.message || 'No message'}</div>
+                                <div className="text-muted small">
+                                  {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                                </div>
                               </div>
                               {renderPrLinks(commit.prs) && (
                                 <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
@@ -535,18 +537,20 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 <ul className="list-group list-group-flush mt-2 nested-commit-list">
                                   {commit.nested_commits.map((nested) => (
                                     <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
-                                      <div className="d-flex flex-wrap align-items-center gap-2">
-                                        {nested.link ? (
-                                          <a href={nested.link} target="_blank" rel="noopener noreferrer">
-                                            {nested.sha?.slice(0, 7) ?? 'unknown'}
-                                          </a>
-                                        ) : (
-                                          nested.sha?.slice(0, 7) ?? 'unknown'
-                                        )}
-                                      </div>
-                                      <div>{nested.message || 'No message'}</div>
-                                      <div className="text-muted small">
-                                        {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
+                                      <div className="commit-summary">
+                                        <div className="d-flex flex-wrap align-items-center gap-2">
+                                          {nested.link ? (
+                                            <a href={nested.link} target="_blank" rel="noopener noreferrer">
+                                              {nested.sha?.slice(0, 7) ?? 'unknown'}
+                                            </a>
+                                          ) : (
+                                            nested.sha?.slice(0, 7) ?? 'unknown'
+                                          )}
+                                        </div>
+                                        <div>{nested.message || 'No message'}</div>
+                                        <div className="text-muted small">
+                                          {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
+                                        </div>
                                       </div>
                                     </li>
                                   ))}

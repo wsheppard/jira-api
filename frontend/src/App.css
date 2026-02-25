@@ -89,6 +89,11 @@
   position: relative;
 }
 
+.commit-summary {
+  position: relative;
+  z-index: 2;
+}
+
 .merge-commit-head {
   position: relative;
   padding-left: 1rem;
@@ -123,17 +128,6 @@
   padding-left: 1.15rem;
 }
 
-.nested-commit-list::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.45rem;
-  bottom: 1.1rem;
-  width: 2px;
-  background: rgba(255, 193, 7, 0.45);
-  border-radius: 999px;
-}
-
 .nested-commit-item {
   position: relative;
   padding-left: 1rem;
@@ -149,4 +143,21 @@
   border-left: 2px solid rgba(255, 193, 7, 0.45);
   border-bottom: 2px solid rgba(255, 193, 7, 0.45);
   border-bottom-left-radius: 0.6rem;
+  z-index: 1;
+}
+
+.nested-commit-item::after {
+  content: '';
+  position: absolute;
+  left: -1rem;
+  top: 1.82rem;
+  bottom: -0.55rem;
+  width: 2px;
+  background: rgba(255, 193, 7, 0.45);
+  border-radius: 999px;
+  z-index: 1;
+}
+
+.nested-commit-item:last-child::after {
+  content: none;
 }
