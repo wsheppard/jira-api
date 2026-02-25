@@ -89,7 +89,7 @@
   position: relative;
 }
 
-.commit-summary {
+.commit-node {
   position: relative;
   z-index: 2;
   min-width: 0;

@@ -500,8 +500,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               key={`${group.key}-${commit.sha}`}
                               className={`list-group-item ${highlight ? 'list-group-item-warning' : ''} ${hasNested ? 'merge-with-children' : ''}`}
                             >
-                              <div className="commit-summary">
-                                <div className={`commit-hash-message ${hasNested ? 'merge-commit-head' : ''}`}>
+                              <div className={`commit-node ${hasNested ? 'merge-commit-head' : ''}`}>
+                                <div className="commit-hash-message">
                                   <span className="commit-hash">
                                     {commit.link ? (
                                       <a href={commit.link} target="_blank" rel="noopener noreferrer">
@@ -533,15 +533,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 <div className="text-muted small">
                                   {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
                                 </div>
+                                {renderPrLinks(commit.prs) && (
+                                  <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                                )}
                               </div>
-                              {renderPrLinks(commit.prs) && (
-                                <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
-                              )}
                               {hasNested && (
                                 <ul className="list-group list-group-flush mt-2 nested-commit-list">
                                   {commit.nested_commits.map((nested) => (
                                     <li key={`${commit.sha}-${nested.sha}`} className="list-group-item nested-commit-item">
-                                      <div className="commit-summary">
+                                      <div className="commit-node">
                                         <div className="commit-hash-message">
                                           <span className="commit-hash">
                                             {nested.link ? (
