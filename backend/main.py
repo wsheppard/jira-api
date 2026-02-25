@@ -264,6 +264,34 @@ async def fetch_pr_details(
     }
 
 
+async def fetch_pr_commits(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    owner: str,
+    repo: str,
+    number: int,
+) -> List[Dict[str, str]]:
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}/commits"
+    resp = await client.get(url, headers=headers, params={"per_page": 100})
+    if resp.status_code != 200:
+        return []
+    commits = []
+    for item in resp.json():
+        commit_info = item.get("commit") or {}
+        author_info = commit_info.get("author") or {}
+        raw_message = commit_info.get("message") or ""
+        commits.append(
+            {
+                "sha": item.get("sha"),
+                "message": raw_message.split("\n")[0],
+                "author": author_info.get("name"),
+                "date": author_info.get("date"),
+                "link": item.get("html_url"),
+            }
+        )
+    return commits
+
+
 @app.get("/in-progress")
 async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
@@ -436,6 +464,10 @@ async def github_branch_commits(
                 seen.add(num)
         return ordered
 
+    def is_merge_commit(commit_payload: Dict[str, Any]) -> bool:
+        parents = commit_payload.get("parents") or []
+        return len(parents) > 1
+
     def extract_jira_keys(text: str | None) -> List[str]:
         if not text:
             return []
@@ -553,6 +585,7 @@ async def github_branch_commits(
 
     commits: List[Dict[str, Any]] = []
     pr_cache: Dict[int, Dict[str, str]] = {}
+    pr_commits_cache: Dict[int, List[Dict[str, str]]] = {}
     async with httpx.AsyncClient() as pr_client:
         for commit in data.get("commits", []):
             commit_info = commit.get("commit") or {}
@@ -562,13 +595,18 @@ async def github_branch_commits(
             jira_entries = build_jira_entries(extract_jira_keys(raw_message))
             pr_numbers = extract_pr_numbers(raw_message)
             prs: List[Dict[str, str]] = []
+            nested_commits: List[Dict[str, str]] = []
             for num in pr_numbers:
                 if num not in pr_cache:
                     pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
                     if pr_detail:
                         pr_cache[num] = pr_detail
+                if num not in pr_commits_cache:
+                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
                 if num in pr_cache:
                     prs.append(pr_cache[num])
+                if is_merge_commit(commit) and num in pr_commits_cache:
+                    nested_commits = pr_commits_cache[num]
             commits.append(
                 {
                     "sha": sha,
@@ -579,6 +617,8 @@ async def github_branch_commits(
                     "tags": tags_by_commit.get(sha, []),
                     "jira": jira_entries,
                     "prs": prs,
+                    "nested_commits": nested_commits,
+                    "is_merge_commit": is_merge_commit(commit),
                     "location": "codex",
                 }
             )
@@ -596,13 +636,18 @@ async def github_branch_commits(
             jira_entries = build_jira_entries(extract_jira_keys(raw_message))
             pr_numbers = extract_pr_numbers(raw_message)
             prs: List[Dict[str, str]] = []
+            nested_commits: List[Dict[str, str]] = []
             for num in pr_numbers:
                 if num not in pr_cache:
                     pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
                     if pr_detail:
                         pr_cache[num] = pr_detail
+                if num not in pr_commits_cache:
+                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
                 if num in pr_cache:
                     prs.append(pr_cache[num])
+                if is_merge_commit(commit) and num in pr_commits_cache:
+                    nested_commits = pr_commits_cache[num]
             base_commits.append(
                 {
                     "sha": sha,
@@ -613,6 +658,8 @@ async def github_branch_commits(
                     "tags": tags_by_commit.get(sha, []),
                     "jira": jira_entries,
                     "prs": prs,
+                    "nested_commits": nested_commits,
+                    "is_merge_commit": is_merge_commit(commit),
                     "location": "master",
                 }
             )
@@ -625,6 +672,7 @@ async def github_branch_commits(
         merge_base_message = merge_base_info.get("message") or ""
         jira_entries = build_jira_entries(extract_jira_keys(merge_base_message))
         merge_base_prs: List[Dict[str, str]] = []
+        merge_base_nested: List[Dict[str, str]] = []
         pr_numbers = extract_pr_numbers(merge_base_message)
         async with httpx.AsyncClient() as pr_client:
             for num in pr_numbers:
@@ -632,8 +680,12 @@ async def github_branch_commits(
                     pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
                     if pr_detail:
                         pr_cache[num] = pr_detail
+                if num not in pr_commits_cache:
+                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
                 if num in pr_cache:
                     merge_base_prs.append(pr_cache[num])
+                if is_merge_commit(merge_base_data) and num in pr_commits_cache:
+                    merge_base_nested = pr_commits_cache[num]
         merge_base = {
             "sha": merge_base_sha,
             "date": merge_base_author.get("date"),
@@ -644,6 +696,8 @@ async def github_branch_commits(
             "label": "common ancestor",
             "jira": jira_entries,
             "prs": merge_base_prs,
+            "nested_commits": merge_base_nested,
+            "is_merge_commit": is_merge_commit(merge_base_data),
             "location": "common",
         }
 
@@ -653,15 +707,22 @@ async def github_branch_commits(
         base_head["jira"] = build_jira_entries(extract_jira_keys(raw_message))
         pr_numbers = extract_pr_numbers(raw_message)
         prs: List[Dict[str, str]] = []
+        nested_commits: List[Dict[str, str]] = []
         async with httpx.AsyncClient() as pr_client:
             for num in pr_numbers:
                 if num not in pr_cache:
                     pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
                     if pr_detail:
                         pr_cache[num] = pr_detail
+                if num not in pr_commits_cache:
+                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
                 if num in pr_cache:
                     prs.append(pr_cache[num])
+                if num in pr_commits_cache and base_data.get("parents") and len(base_data.get("parents")) > 1:
+                    nested_commits = pr_commits_cache[num]
         base_head["prs"] = prs
+        base_head["nested_commits"] = nested_commits
+        base_head["is_merge_commit"] = bool(base_data.get("parents") and len(base_data.get("parents")) > 1)
         base_head["location"] = "master"
     return {
         "owner": owner,

@@ -484,6 +484,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 {commit.location === 'common' && (
                                   <span className="badge text-bg-dark">Common ancestor</span>
                                 )}
+                                {commit.is_merge_commit && (
+                                  <span className="badge text-bg-info">Merge commit</span>
+                                )}
                                 {Array.isArray(commit.tags) && commit.tags.length > 0 && (
                                   <span className="ms-1">
                                     {commit.tags.map((tag) => (
@@ -500,6 +503,27 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               </div>
                               {renderPrLinks(commit.prs) && (
                                 <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                              )}
+                              {Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0 && (
+                                <ul className="list-group list-group-flush mt-2">
+                                  {commit.nested_commits.map((nested) => (
+                                    <li key={`${commit.sha}-${nested.sha}`} className="list-group-item">
+                                      <div className="d-flex flex-wrap align-items-center gap-2">
+                                        {nested.link ? (
+                                          <a href={nested.link} target="_blank" rel="noopener noreferrer">
+                                            {nested.sha?.slice(0, 7) ?? 'unknown'}
+                                          </a>
+                                        ) : (
+                                          nested.sha?.slice(0, 7) ?? 'unknown'
+                                        )}
+                                      </div>
+                                      <div>{nested.message || 'No message'}</div>
+                                      <div className="text-muted small">
+                                        {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
                               )}
                             </li>
                           );
