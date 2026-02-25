@@ -245,6 +245,29 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
     return results
 
 
+async def fetch_commit_prs(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    owner: str,
+    repo: str,
+    sha: str,
+) -> List[Dict[str, str]]:
+    url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/pulls"
+    resp = await client.get(url, headers=headers)
+    if resp.status_code != 200:
+        return []
+    prs = []
+    for pr in resp.json():
+        prs.append(
+            {
+                "number": pr.get("number"),
+                "title": pr.get("title") or "",
+                "link": pr.get("html_url") or "",
+            }
+        )
+    return prs
+
+
 @app.get("/in-progress")
 async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
@@ -510,45 +533,53 @@ async def github_branch_commits(
                 page += 1
 
     commits: List[Dict[str, Any]] = []
-    for commit in data.get("commits", []):
-        commit_info = commit.get("commit") or {}
-        author_info = commit_info.get("author") or {}
-        raw_message = commit_info.get("message") or ""
-        sha = commit.get("sha")
-        jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-        commits.append(
-            {
-                "sha": sha,
-                "date": author_info.get("date"),
-                "author": author_info.get("name"),
-                "message": raw_message.split("\n")[0],
-                "link": commit.get("html_url"),
-                "tags": tags_by_commit.get(sha, []),
-                "jira": jira_entries,
-            }
-        )
+    async with httpx.AsyncClient() as pr_client:
+        for commit in data.get("commits", []):
+            commit_info = commit.get("commit") or {}
+            author_info = commit_info.get("author") or {}
+            raw_message = commit_info.get("message") or ""
+            sha = commit.get("sha")
+            jira_entries = build_jira_entries(extract_jira_keys(raw_message))
+            prs = await fetch_commit_prs(pr_client, headers, owner, repo, sha) if sha else []
+            commits.append(
+                {
+                    "sha": sha,
+                    "date": author_info.get("date"),
+                    "author": author_info.get("name"),
+                    "message": raw_message.split("\n")[0],
+                    "link": commit.get("html_url"),
+                    "tags": tags_by_commit.get(sha, []),
+                    "jira": jira_entries,
+                    "prs": prs,
+                    "location": "codex",
+                }
+            )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
 
     base_commits: List[Dict[str, Any]] = []
-    for commit in base_commits_raw:
-        commit_info = commit.get("commit") or {}
-        author_info = commit_info.get("author") or {}
-        raw_message = commit_info.get("message") or ""
-        sha = commit.get("sha")
-        if not sha or sha == base_sha:
-            continue
-        jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-        base_commits.append(
-            {
-                "sha": sha,
-                "date": author_info.get("date"),
-                "author": author_info.get("name"),
-                "message": raw_message.split("\n")[0],
-                "link": commit.get("html_url"),
-                "tags": tags_by_commit.get(sha, []),
-                "jira": jira_entries,
-            }
-        )
+    async with httpx.AsyncClient() as pr_client:
+        for commit in base_commits_raw:
+            commit_info = commit.get("commit") or {}
+            author_info = commit_info.get("author") or {}
+            raw_message = commit_info.get("message") or ""
+            sha = commit.get("sha")
+            if not sha or sha == base_sha:
+                continue
+            jira_entries = build_jira_entries(extract_jira_keys(raw_message))
+            prs = await fetch_commit_prs(pr_client, headers, owner, repo, sha)
+            base_commits.append(
+                {
+                    "sha": sha,
+                    "date": author_info.get("date"),
+                    "author": author_info.get("name"),
+                    "message": raw_message.split("\n")[0],
+                    "link": commit.get("html_url"),
+                    "tags": tags_by_commit.get(sha, []),
+                    "jira": jira_entries,
+                    "prs": prs,
+                    "location": "master",
+                }
+            )
     base_commits.sort(key=lambda item: item.get("date") or "", reverse=True)
 
     merge_base: Dict[str, Any] | None = None
@@ -557,6 +588,8 @@ async def github_branch_commits(
         merge_base_author = merge_base_info.get("author") or {}
         merge_base_message = merge_base_info.get("message") or ""
         jira_entries = build_jira_entries(extract_jira_keys(merge_base_message))
+        async with httpx.AsyncClient() as pr_client:
+            merge_base_prs = await fetch_commit_prs(pr_client, headers, owner, repo, merge_base_sha)
         merge_base = {
             "sha": merge_base_sha,
             "date": merge_base_author.get("date"),
@@ -566,12 +599,17 @@ async def github_branch_commits(
             "tags": tags_by_commit.get(merge_base_sha, []),
             "label": "common ancestor",
             "jira": jira_entries,
+            "prs": merge_base_prs,
+            "location": "common",
         }
 
     if base_head and base_sha:
         base_head["tags"] = tags_by_commit.get(base_sha, [])
         raw_message = (base_data.get("commit") or {}).get("message") or ""
         base_head["jira"] = build_jira_entries(extract_jira_keys(raw_message))
+        async with httpx.AsyncClient() as pr_client:
+            base_head["prs"] = await fetch_commit_prs(pr_client, headers, owner, repo, base_sha)
+        base_head["location"] = "master"
     return {
         "owner": owner,
         "repo": repo,

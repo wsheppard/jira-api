@@ -315,6 +315,69 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return commits;
   };
 
+  const buildCommitGroups = () => {
+    const groups = new Map();
+    const noJiraKey = 'NO-JIRA';
+
+    const addToGroup = (groupKey, meta, commit) => {
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          key: groupKey,
+          title: meta?.summary || '',
+          status: meta?.status || '',
+          link: meta?.link || '',
+          commits: [],
+        });
+      }
+      groups.get(groupKey).commits.push(commit);
+    };
+
+    const addCommit = (commit) => {
+      const jiraItems = Array.isArray(commit?.jira) ? commit.jira : [];
+      if (jiraItems.length === 0) {
+        addToGroup(noJiraKey, null, commit);
+        return;
+      }
+      jiraItems.forEach((jiraItem) => addToGroup(jiraItem.key, jiraItem, commit));
+    };
+
+    buildMasterCommits().forEach(addCommit);
+    githubCommits.forEach(addCommit);
+    if (githubCompare?.merge_base) {
+      addCommit(githubCompare.merge_base);
+    }
+
+    const groupList = Array.from(groups.values());
+    groupList.forEach((group) => {
+      group.commits.sort((a, b) => (b?.date || '').localeCompare(a?.date || ''));
+    });
+    groupList.sort((a, b) => {
+      if (a.key === noJiraKey) return 1;
+      if (b.key === noJiraKey) return -1;
+      const aDate = a.commits[0]?.date || '';
+      const bDate = b.commits[0]?.date || '';
+      return bDate.localeCompare(aDate);
+    });
+    return groupList;
+  };
+
+  const renderPrLinks = (prs) => {
+    if (!Array.isArray(prs) || prs.length === 0) {
+      return null;
+    }
+    return prs.map((pr, index) => (
+      <span key={`${pr.number}-${index}`} className="me-2">
+        {pr.link ? (
+          <a href={pr.link} target="_blank" rel="noopener noreferrer">
+            PR #{pr.number} — {pr.title || 'Untitled'}
+          </a>
+        ) : (
+          `PR #${pr.number} — ${pr.title || 'Untitled'}`
+        )}
+      </span>
+    ));
+  };
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -399,102 +462,74 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
                 )}
               </div>
-              <div className="table-responsive">
-                <table className="table table-striped align-middle">
-                  <thead>
-                    <tr>
-                      <th scope="col">Commit</th>
-                      <th scope="col">Message</th>
-                      <th scope="col">Jira</th>
-                      <th scope="col">Author</th>
-                      <th scope="col">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {buildMasterCommits().map((commit) => (
-                      <tr key={`base-${commit.sha}`} className="table-warning">
-                        <td>
-                          {commit.link ? (
-                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                              {commit.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            commit.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                          {commit.label === 'master head' && (
-                            <span className="badge text-bg-dark ms-2">Master head</span>
-                          )}
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                            <span className="ms-2">
-                              {commit.tags.map((tag) => (
-                                <span key={tag} className="badge text-bg-secondary me-1">
-                                  {tag}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
-                        <td>{commit.message || 'No message'}</td>
-                        <td>{renderJiraLinks(commit.jira)}</td>
-                        <td>{commit.author || 'Unknown'}</td>
-                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    ))}
-                    {githubCommits.map((commit) => (
-                      <tr key={commit.sha}>
-                        <td>
-                          {commit.link ? (
-                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                              {commit.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            commit.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                            <span className="ms-2">
-                              {commit.tags.map((tag) => (
-                                <span key={tag} className="badge text-bg-secondary me-1">
-                                  {tag}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
-                        <td>{commit.message || 'No message'}</td>
-                        <td>{renderJiraLinks(commit.jira)}</td>
-                        <td>{commit.author || 'Unknown'}</td>
-                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    ))}
-                    {githubCompare?.merge_base && (
-                      <tr className="table-warning">
-                        <td>
-                          {githubCompare.merge_base.link ? (
-                            <a href={githubCompare.merge_base.link} target="_blank" rel="noopener noreferrer">
-                              {githubCompare.merge_base.sha?.slice(0, 7) ?? 'unknown'}
-                            </a>
-                          ) : (
-                            githubCompare.merge_base.sha?.slice(0, 7) ?? 'unknown'
-                          )}
-                          <span className="badge text-bg-dark ms-2">Common ancestor</span>
-                          {Array.isArray(githubCompare.merge_base.tags) && githubCompare.merge_base.tags.length > 0 && (
-                            <span className="ms-2">
-                              {githubCompare.merge_base.tags.map((tag) => (
-                                <span key={tag} className="badge text-bg-secondary me-1">
-                                  {tag}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </td>
-                        <td>{githubCompare.merge_base.message || 'No message'}</td>
-                        <td>{renderJiraLinks(githubCompare.merge_base.jira)}</td>
-                        <td>{githubCompare.merge_base.author || 'Unknown'}</td>
-                        <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="row g-3">
+                {buildCommitGroups().map((group) => (
+                  <div className="col-12 col-xl-6" key={group.key}>
+                    <div className="card h-100">
+                      <div className="card-header d-flex flex-wrap align-items-center gap-2">
+                        {group.key === 'NO-JIRA' ? (
+                          <span className="fw-semibold">No Jira</span>
+                        ) : (
+                          <>
+                            {group.link ? (
+                              <a href={group.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                                {group.key}
+                              </a>
+                            ) : (
+                              <span className="fw-semibold">{group.key}</span>
+                            )}
+                            {group.title && <span className="text-muted">{group.title}</span>}
+                          </>
+                        )}
+                        {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
+                        <span className="badge text-bg-light border">{group.commits.length} commits</span>
+                      </div>
+                      <ul className="list-group list-group-flush">
+                        {group.commits.map((commit) => {
+                          const highlight = commit.location !== 'codex';
+                          return (
+                            <li key={`${group.key}-${commit.sha}`} className={`list-group-item ${highlight ? 'list-group-item-warning' : ''}`}>
+                              <div className="d-flex flex-wrap align-items-center gap-2">
+                                {commit.link ? (
+                                  <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                                    {commit.sha?.slice(0, 7) ?? 'unknown'}
+                                  </a>
+                                ) : (
+                                  commit.sha?.slice(0, 7) ?? 'unknown'
+                                )}
+                                {commit.label === 'master head' && (
+                                  <span className="badge text-bg-dark">Master head</span>
+                                )}
+                                {commit.location === 'common' && (
+                                  <span className="badge text-bg-dark">Common ancestor</span>
+                                )}
+                                {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                                  <span className="ms-1">
+                                    {commit.tags.map((tag) => (
+                                      <span key={tag} className="badge text-bg-secondary me-1">
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </div>
+                              <div>{commit.message || 'No message'}</div>
+                              <div className="text-muted small">
+                                {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                              </div>
+                              {renderJiraLinks(commit.jira) && (
+                                <div className="small mt-1">Jira: {renderJiraLinks(commit.jira)}</div>
+                              )}
+                              {renderPrLinks(commit.prs) && (
+                                <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
