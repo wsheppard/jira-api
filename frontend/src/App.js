@@ -379,6 +379,34 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </tr>
                   </thead>
                   <tbody>
+                    {githubCompare?.base_head && (
+                      <tr className="table-warning">
+                        <td>
+                          {githubCompare.base_head.link ? (
+                            <a href={githubCompare.base_head.link} target="_blank" rel="noopener noreferrer">
+                              {githubCompare.base_head.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            githubCompare.base_head.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                          <span className="badge text-bg-dark ms-2">Master head</span>
+                        </td>
+                        <td>{githubCompare.base_head.message || 'No message'}</td>
+                        <td>
+                          {Array.isArray(githubCompare.base_head.tags) && githubCompare.base_head.tags.length > 0 ? (
+                            githubCompare.base_head.tags.map((tag) => (
+                              <span key={tag} className="badge text-bg-secondary me-1">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>{githubCompare.base_head.author || 'Unknown'}</td>
+                        <td>{githubCompare.base_head.date ? new Date(githubCompare.base_head.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    )}
                     {githubCommits.map((commit) => (
                       <tr key={commit.sha}>
                         <td>

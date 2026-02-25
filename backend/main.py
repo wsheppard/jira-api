@@ -372,11 +372,33 @@ async def github_branch_commits(
 
     data = resp.json()
     commit_shas = [commit.get("sha") for commit in data.get("commits", []) if commit.get("sha")]
+    base_head: Dict[str, Any] | None = None
+    base_sha: str | None = None
+    base_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{base}"
+    async with httpx.AsyncClient() as client:
+        resp_base = await client.get(base_url, headers=headers)
+    if resp_base.status_code == 200:
+        base_data = resp_base.json()
+        base_sha = base_data.get("sha")
+        base_info = base_data.get("commit") or {}
+        base_author = base_info.get("author") or {}
+        base_message = base_info.get("message") or ""
+        base_head = {
+            "sha": base_sha,
+            "date": base_author.get("date"),
+            "author": base_author.get("name"),
+            "message": base_message.split("\n")[0],
+            "link": base_data.get("html_url"),
+            "label": "master head",
+        }
+
     tags_by_commit: Dict[str, List[str]] = {}
-    if commit_shas:
+    if commit_shas or base_sha:
         tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
         page = 1
         remaining = set(commit_shas)
+        if base_sha:
+            remaining.add(base_sha)
         async with httpx.AsyncClient() as client:
             while remaining:
                 resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
@@ -412,6 +434,8 @@ async def github_branch_commits(
             }
         )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
+    if base_head and base_sha:
+        base_head["tags"] = tags_by_commit.get(base_sha, [])
     return {
         "owner": owner,
         "repo": repo,
@@ -420,6 +444,7 @@ async def github_branch_commits(
         "ahead_by": data.get("ahead_by"),
         "behind_by": data.get("behind_by"),
         "total_commits": len(commits),
+        "base_head": base_head,
         "commits": commits,
     }
 
