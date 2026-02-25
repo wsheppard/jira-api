@@ -126,7 +126,7 @@
 .merge-commit-head::before {
   content: '';
   position: absolute;
-  left: 0;
+  left: 0.85rem;
   top: 0.35rem;
   width: 9px;
   height: 9px;
@@ -138,9 +138,9 @@
 .merge-commit-head::after {
   content: '';
   position: absolute;
-  left: 3.5px;
+  left: 1.13rem;
   top: 1rem;
-  bottom: -0.8rem;
+  bottom: -1.35rem;
   width: 2px;
   background: rgba(255, 193, 7, 0.5);
   border-radius: 999px;
