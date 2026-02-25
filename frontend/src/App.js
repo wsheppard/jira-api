@@ -517,9 +517,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               <div className="text-muted small">
                                 {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
                               </div>
-                              {renderJiraLinks(commit.jira) && (
-                                <div className="small mt-1">Jira: {renderJiraLinks(commit.jira)}</div>
-                              )}
                               {renderPrLinks(commit.prs) && (
                                 <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
                               )}
