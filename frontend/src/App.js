@@ -355,6 +355,21 @@ const [nextPollIn, setNextPollIn] = useState(30);
     groupList.forEach((group) => {
       group.commits.sort((a, b) => (b?.date || '').localeCompare(a?.date || ''));
     });
+    const nestedCommitShas = new Set();
+    groupList.forEach((group) => {
+      group.commits.forEach((commit) => {
+        if (Array.isArray(commit?.nested_commits)) {
+          commit.nested_commits.forEach((nested) => {
+            if (nested?.sha) {
+              nestedCommitShas.add(nested.sha);
+            }
+          });
+        }
+      });
+    });
+    groupList.forEach((group) => {
+      group.commits = group.commits.filter((commit) => !nestedCommitShas.has(commit.sha));
+    });
     groupList.sort((a, b) => {
       if (a.key === noJiraKey) return 1;
       if (b.key === noJiraKey) return -1;
