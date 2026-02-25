@@ -86,9 +86,9 @@
 }
 
 .nested-commit-list {
-  margin-left: 1rem;
-  padding-left: 1rem;
-  border-left: 2px solid rgba(255, 193, 7, 0.5);
+  position: relative;
+  margin-left: 1.25rem;
+  padding-left: 1.25rem;
 }
 
 .nested-commit-item {
@@ -96,12 +96,26 @@
   padding-left: 1.25rem;
 }
 
+.nested-commit-list::before {
+  content: '';
+  position: absolute;
+  left: 0.15rem;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 3px;
+  background: rgba(255, 193, 7, 0.45);
+  border-radius: 999px;
+  z-index: 1;
+}
+
 .nested-commit-item::before {
   content: '';
   position: absolute;
-  left: -1rem;
-  top: 1.15rem;
-  width: 0.75rem;
-  height: 2px;
-  background: rgba(255, 193, 7, 0.5);
+  left: -0.75rem;
+  top: 1.05rem;
+  width: 0.6rem;
+  height: 3px;
+  background: rgba(255, 193, 7, 0.45);
+  border-radius: 999px;
+  z-index: 2;
 }

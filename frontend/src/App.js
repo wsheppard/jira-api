@@ -91,6 +91,7 @@ function App() {
 const [nextPollIn, setNextPollIn] = useState(30);
   const pendingRequests = useRef(0);
   const githubRequestId = useRef(0);
+  const groupOrderRef = useRef(new Map());
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
 
@@ -370,12 +371,18 @@ const [nextPollIn, setNextPollIn] = useState(30);
     groupList.forEach((group) => {
       group.commits = group.commits.filter((commit) => !nestedCommitShas.has(commit.sha));
     });
+    const orderMap = groupOrderRef.current;
+    let nextIndex = orderMap.size;
+    groupList.forEach((group) => {
+      if (!orderMap.has(group.key)) {
+        orderMap.set(group.key, nextIndex);
+        nextIndex += 1;
+      }
+    });
     groupList.sort((a, b) => {
       if (a.key === noJiraKey) return 1;
       if (b.key === noJiraKey) return -1;
-      const aDate = a.commits[0]?.date || '';
-      const bDate = b.commits[0]?.date || '';
-      return bDate.localeCompare(aDate);
+      return (orderMap.get(a.key) ?? 0) - (orderMap.get(b.key) ?? 0);
     });
     return groupList;
   };
