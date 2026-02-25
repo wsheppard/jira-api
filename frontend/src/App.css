@@ -151,7 +151,7 @@
 }
 
 .nested-commit-list {
-  margin-left: 0.5rem;
+  margin-left: 0;
   padding-left: 0;
 }
 
@@ -160,6 +160,10 @@
   grid-template-columns: 1.5rem minmax(0, 1fr);
   gap: 0.35rem;
   padding-left: 0;
+}
+
+.nested-commit-item .commit-node {
+  padding-left: 0.5rem;
 }
 
 .nested-commit-item .connector-lane::before {
