@@ -410,11 +410,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </tr>
                   </thead>
                   <tbody>
-                    {buildMasterCommits().length > 0 && (
-                      <tr className="table-light">
-                        <td colSpan="5" className="fw-semibold text-muted">Master-only commits</td>
-                      </tr>
-                    )}
                     {buildMasterCommits().map((commit) => (
                       <tr key={`base-${commit.sha}`} className="table-warning">
                         <td>
