@@ -454,7 +454,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
             <div className="card-body">
               <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
                 <div>
-                  <div className="fw-semibold">palliativa/monorepo</div>
+                  <div className="fw-semibold d-flex align-items-center gap-2">
+                    <span>palliativa/monorepo</span>
+                    {githubCompare?.latest_tag && (
+                      <span className="badge text-bg-secondary">Latest tag: {githubCompare.latest_tag}</span>
+                    )}
+                  </div>
                   {githubCompare && (
                     <small className="text-muted">
                       {githubCompare.base} → {githubCompare.head} · Ahead {githubCompare.ahead_by ?? 0} · Behind {githubCompare.behind_by ?? 0}

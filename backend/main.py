@@ -556,6 +556,7 @@ async def github_branch_commits(
         return entries
 
     tags_by_commit: Dict[str, List[str]] = {}
+    latest_tag: str | None = None
     if commit_shas or base_sha or base_commit_shas or merge_base_sha:
         tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
         page = 1
@@ -578,6 +579,8 @@ async def github_branch_commits(
                     tag_commit = (tag.get("commit") or {}).get("sha")
                     if not tag_name or not tag_commit:
                         continue
+                    if latest_tag is None:
+                        latest_tag = tag_name
                     tags_by_commit.setdefault(tag_commit, []).append(tag_name)
                     if tag_commit in remaining:
                         remaining.discard(tag_commit)
@@ -731,6 +734,7 @@ async def github_branch_commits(
         "head": head,
         "ahead_by": data.get("ahead_by"),
         "behind_by": data.get("behind_by"),
+        "latest_tag": latest_tag,
         "total_commits": len(commits),
         "base_head": base_head,
         "merge_base": merge_base,
