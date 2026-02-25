@@ -283,6 +283,25 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const renderJiraLinks = (items) => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return null;
+    }
+    return items.map((item, index) => (
+      <span key={`${item.key}-${index}`} className="me-2">
+        {item.link ? (
+          <a href={item.link} target="_blank" rel="noopener noreferrer">
+            {item.key}
+          </a>
+        ) : (
+          item.key
+        )}
+        {item.status ? <span className="text-muted"> ({item.status})</span> : null}
+      </span>
+    ));
+  };
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -373,6 +392,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     <tr>
                       <th scope="col">Commit</th>
                       <th scope="col">Message</th>
+                      <th scope="col">Jira</th>
                       <th scope="col">Author</th>
                       <th scope="col">Date</th>
                     </tr>
@@ -380,7 +400,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <tbody>
                     {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.length > 0 && (
                       <tr className="table-light">
-                        <td colSpan="4" className="fw-semibold text-muted">Master-only commits</td>
+                        <td colSpan="5" className="fw-semibold text-muted">Master-only commits</td>
                       </tr>
                     )}
                     {Array.isArray(githubCompare?.base_commits) && githubCompare.base_commits.map((commit) => (
@@ -404,6 +424,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           )}
                         </td>
                         <td>{commit.message || 'No message'}</td>
+                        <td>{renderJiraLinks(commit.jira)}</td>
                         <td>{commit.author || 'Unknown'}</td>
                         <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
@@ -429,6 +450,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           )}
                         </td>
                         <td>{commit.message || 'No message'}</td>
+                        <td>{renderJiraLinks(commit.jira)}</td>
                         <td>{commit.author || 'Unknown'}</td>
                         <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
@@ -455,6 +477,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           )}
                         </td>
                         <td>{githubCompare.merge_base.message || 'No message'}</td>
+                        <td>{renderJiraLinks(githubCompare.merge_base.jira)}</td>
                         <td>{githubCompare.merge_base.author || 'Unknown'}</td>
                         <td>{githubCompare.merge_base.date ? new Date(githubCompare.merge_base.date).toLocaleString() : 'Unknown'}</td>
                       </tr>
@@ -481,6 +504,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           )}
                         </td>
                         <td>{githubCompare.base_head.message || 'No message'}</td>
+                        <td>{renderJiraLinks(githubCompare.base_head.jira)}</td>
                         <td>{githubCompare.base_head.author || 'Unknown'}</td>
                         <td>{githubCompare.base_head.date ? new Date(githubCompare.base_head.date).toLocaleString() : 'Unknown'}</td>
                       </tr>

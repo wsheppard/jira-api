@@ -25,6 +25,7 @@ import asyncio
 import copy
 import logging
 import os
+import re
 import time
 from datetime import date
 from typing import Any, Dict, List, Tuple
@@ -35,6 +36,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from pipeline_dashboard import PipelineDashboard
+
+JIRA_KEY_REGEX = re.compile(r"\b((?:AP|PD)-\d+)\b")
 
 # reduce noisy dependency logging; disable httpx chatter entirely
 logging.basicConfig(level=logging.INFO)
@@ -210,6 +213,35 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
     return flattened
 
 
+async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
+    """Fetch Jira status and link for AP/PD issues in the palliativa instance."""
+    if not keys:
+        return {}
+    unique_keys = sorted(set(keys))
+    fields = ["status", "key"]
+    jql = f"key in ({', '.join(unique_keys)})"
+    headers = {"Content-Type": "application/json"}
+    cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
+    if not cfg:
+        raise RuntimeError("Palliativa Jira config not found")
+    async with httpx.AsyncClient() as client:
+        search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+        resp = await client.post(search_url, auth=(cfg["email"], cfg["token"]), headers=headers, json={"jql": jql, "fields": fields})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    results: Dict[str, Dict[str, str]] = {}
+    for issue in resp.json().get("issues", []):
+        key = issue.get("key")
+        status = (issue.get("fields", {}).get("status") or {}).get("name")
+        if key:
+            results[key] = {
+                "key": key,
+                "status": status or "",
+                "link": f"{cfg['base_url'].rstrip('/')}/browse/{key}",
+            }
+    return results
+
+
 @app.get("/in-progress")
 async def in_progress():
     """Aggregate Jira issues with status *In Progress* across instances."""
@@ -359,6 +391,18 @@ async def github_branch_commits(
     head: str = "codex/integration",
 ) -> Dict[str, Any]:
     """Return commits on head that are not reachable from base using GitHub compare API."""
+    def extract_jira_keys(text: str | None) -> List[str]:
+        if not text:
+            return []
+        matches = JIRA_KEY_REGEX.findall(text)
+        seen: set[str] = set()
+        ordered: List[str] = []
+        for key in matches:
+            if key not in seen:
+                ordered.append(key)
+                seen.add(key)
+        return ordered
+
     url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
     headers = {
         "Accept": "application/vnd.github+json",
@@ -402,6 +446,38 @@ async def github_branch_commits(
             "label": "master head",
         }
 
+    jira_base_url = ""
+    palliativa_cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
+    if palliativa_cfg:
+        jira_base_url = palliativa_cfg.get("base_url", "").rstrip("/")
+
+    jira_keys: List[str] = []
+    for commit in data.get("commits", []):
+        raw_message = (commit.get("commit") or {}).get("message") or ""
+        jira_keys.extend(extract_jira_keys(raw_message))
+    for commit in base_commits_raw:
+        raw_message = (commit.get("commit") or {}).get("message") or ""
+        jira_keys.extend(extract_jira_keys(raw_message))
+    if merge_base_data:
+        raw_message = (merge_base_data.get("commit") or {}).get("message") or ""
+        jira_keys.extend(extract_jira_keys(raw_message))
+    if base_head:
+        raw_message = (base_data.get("commit") or {}).get("message") or ""
+        jira_keys.extend(extract_jira_keys(raw_message))
+
+    jira_lookup = await fetch_jira_statuses(jira_keys)
+
+    def build_jira_entries(keys: List[str]) -> List[Dict[str, str]]:
+        entries: List[Dict[str, str]] = []
+        for key in keys:
+            entry = jira_lookup.get(key)
+            if entry:
+                entries.append(entry)
+            else:
+                link = f"{jira_base_url}/browse/{key}" if jira_base_url else ""
+                entries.append({"key": key, "status": "", "link": link})
+        return entries
+
     tags_by_commit: Dict[str, List[str]] = {}
     if commit_shas or base_sha or base_commit_shas or merge_base_sha:
         tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
@@ -436,6 +512,7 @@ async def github_branch_commits(
         author_info = commit_info.get("author") or {}
         raw_message = commit_info.get("message") or ""
         sha = commit.get("sha")
+        jira_entries = build_jira_entries(extract_jira_keys(raw_message))
         commits.append(
             {
                 "sha": sha,
@@ -444,6 +521,7 @@ async def github_branch_commits(
                 "message": raw_message.split("\n")[0],
                 "link": commit.get("html_url"),
                 "tags": tags_by_commit.get(sha, []),
+                "jira": jira_entries,
             }
         )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
@@ -456,6 +534,7 @@ async def github_branch_commits(
         sha = commit.get("sha")
         if not sha or sha == base_sha:
             continue
+        jira_entries = build_jira_entries(extract_jira_keys(raw_message))
         base_commits.append(
             {
                 "sha": sha,
@@ -464,6 +543,7 @@ async def github_branch_commits(
                 "message": raw_message.split("\n")[0],
                 "link": commit.get("html_url"),
                 "tags": tags_by_commit.get(sha, []),
+                "jira": jira_entries,
             }
         )
     base_commits.sort(key=lambda item: item.get("date") or "", reverse=True)
@@ -473,6 +553,7 @@ async def github_branch_commits(
         merge_base_info = merge_base_data.get("commit") or {}
         merge_base_author = merge_base_info.get("author") or {}
         merge_base_message = merge_base_info.get("message") or ""
+        jira_entries = build_jira_entries(extract_jira_keys(merge_base_message))
         merge_base = {
             "sha": merge_base_sha,
             "date": merge_base_author.get("date"),
@@ -481,10 +562,13 @@ async def github_branch_commits(
             "link": merge_base_data.get("html_url"),
             "tags": tags_by_commit.get(merge_base_sha, []),
             "label": "common ancestor",
+            "jira": jira_entries,
         }
 
     if base_head and base_sha:
         base_head["tags"] = tags_by_commit.get(base_sha, [])
+        raw_message = (base_data.get("commit") or {}).get("message") or ""
+        base_head["jira"] = build_jira_entries(extract_jira_keys(raw_message))
     return {
         "owner": owner,
         "repo": repo,
