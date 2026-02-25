@@ -550,44 +550,67 @@ async def github_branch_commits(
                         latest_tag = tag_name
                 page += 1
 
-    commits: List[Dict[str, Any]] = []
+    commit_pr_numbers: Dict[str, List[int]] = {}
+    unique_pr_numbers: set[int] = set()
+    for commit in commits_raw:
+        raw_message = (commit.get("commit") or {}).get("message") or ""
+        sha = commit.get("sha")
+        if not sha:
+            continue
+        pr_numbers = extract_pr_numbers(raw_message)
+        commit_pr_numbers[sha] = pr_numbers
+        unique_pr_numbers.update(pr_numbers)
+
+    async def load_pr_data(
+        pr_client: httpx.AsyncClient, pr_number: int
+    ) -> Tuple[int, Dict[str, str] | None, List[Dict[str, str]]]:
+        pr_detail, pr_commits = await asyncio.gather(
+            fetch_pr_details(pr_client, headers, owner, repo, pr_number),
+            fetch_pr_commits(pr_client, headers, owner, repo, pr_number),
+        )
+        return pr_number, pr_detail, pr_commits
+
     pr_cache: Dict[int, Dict[str, str]] = {}
     pr_commits_cache: Dict[int, List[Dict[str, str]]] = {}
-    async with httpx.AsyncClient() as pr_client:
-        for commit in commits_raw:
-            commit_info = commit.get("commit") or {}
-            author_info = commit_info.get("author") or {}
-            raw_message = commit_info.get("message") or ""
-            sha = commit.get("sha")
-            jira_entries = build_jira_entries(extract_jira_keys(raw_message))
-            pr_numbers = extract_pr_numbers(raw_message)
-            prs: List[Dict[str, str]] = []
-            nested_commits: List[Dict[str, str]] = []
-            for num in pr_numbers:
-                if num not in pr_cache:
-                    pr_detail = await fetch_pr_details(pr_client, headers, owner, repo, num)
-                    if pr_detail:
-                        pr_cache[num] = pr_detail
-                if num not in pr_commits_cache:
-                    pr_commits_cache[num] = await fetch_pr_commits(pr_client, headers, owner, repo, num)
-                if num in pr_cache:
-                    prs.append(pr_cache[num])
-                if is_merge_commit(commit) and num in pr_commits_cache:
-                    nested_commits = pr_commits_cache[num]
-            commits.append(
-                {
-                    "sha": sha,
-                    "date": author_info.get("date"),
-                    "author": author_info.get("name"),
-                    "message": raw_message.split("\n")[0],
-                    "link": commit.get("html_url"),
-                    "tags": tags_by_commit.get(sha, []),
-                    "jira": jira_entries,
-                    "prs": prs,
-                    "nested_commits": nested_commits,
-                    "is_merge_commit": is_merge_commit(commit),
-                }
+    if unique_pr_numbers:
+        async with httpx.AsyncClient() as pr_client:
+            pr_results = await asyncio.gather(
+                *(load_pr_data(pr_client, pr_number) for pr_number in sorted(unique_pr_numbers))
             )
+        for pr_number, pr_detail, pr_commits in pr_results:
+            if pr_detail:
+                pr_cache[pr_number] = pr_detail
+            pr_commits_cache[pr_number] = pr_commits
+
+    commits: List[Dict[str, Any]] = []
+    for commit in commits_raw:
+        commit_info = commit.get("commit") or {}
+        author_info = commit_info.get("author") or {}
+        raw_message = commit_info.get("message") or ""
+        sha = commit.get("sha")
+        jira_entries = build_jira_entries(extract_jira_keys(raw_message))
+        pr_numbers = commit_pr_numbers.get(sha or "", [])
+        prs: List[Dict[str, str]] = [pr_cache[num] for num in pr_numbers if num in pr_cache]
+        nested_commits: List[Dict[str, str]] = []
+        if is_merge_commit(commit):
+            for num in pr_numbers:
+                if num in pr_commits_cache:
+                    nested_commits = pr_commits_cache[num]
+                    break
+        commits.append(
+            {
+                "sha": sha,
+                "date": author_info.get("date"),
+                "author": author_info.get("name"),
+                "message": raw_message.split("\n")[0],
+                "link": commit.get("html_url"),
+                "tags": tags_by_commit.get(sha, []),
+                "jira": jira_entries,
+                "prs": prs,
+                "nested_commits": nested_commits,
+                "is_merge_commit": is_merge_commit(commit),
+            }
+        )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
 
     return {
