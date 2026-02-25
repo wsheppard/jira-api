@@ -14,10 +14,26 @@ const VIEW_CONFIG = {
   codexEnrich: { label: 'Codex Enrich / Enriched', endpoint: 'codex-enrich', type: 'tickets' },
   codexMoreInfo: { label: 'Codex More Info', endpoint: 'codex-more-info', type: 'tickets' },
   codexImplemented: { label: 'Codex Implemented', endpoint: 'codex-implemented', type: 'tickets' },
+  codexIntegrationCommits: {
+    label: 'Codex Integration Commits',
+    endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=master&head=codex/integration',
+    type: 'githubCommits',
+  },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
 
-const VIEW_ORDER = ['open', 'inProgress', 'backlog', 'managerMeeting', 'recentActivity', 'codexEnrich', 'codexMoreInfo', 'codexImplemented', 'pipeline'];
+const VIEW_ORDER = [
+  'open',
+  'inProgress',
+  'backlog',
+  'managerMeeting',
+  'recentActivity',
+  'codexEnrich',
+  'codexMoreInfo',
+  'codexImplemented',
+  'codexIntegrationCommits',
+  'pipeline',
+];
 const DEFAULT_VIEW = 'open';
 
 const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
@@ -66,6 +82,8 @@ function App() {
     codexMoreInfo: [],
     codexImplemented: [],
   });
+  const [githubCommits, setGithubCommits] = useState([]);
+  const [githubCompare, setGithubCompare] = useState(null);
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -176,6 +194,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
         } else {
           setPipelineCategories([]);
         }
+      } else if (config.type === 'githubCommits') {
+        const data = await fetchJson(config.endpoint);
+        setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
+        setGithubCompare(data ?? null);
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -325,6 +347,70 @@ const [nextPollIn, setNextPollIn] = useState(30);
           <p className="text-muted fst-italic">No pipeline data available.</p>
         ) : (
           <PipelineDashboard data={pipelineData} categories={pipelineCategories} />
+        )
+      ) : activeConfig?.type === 'githubCommits' ? (
+        githubCommits.length === 0 && !isLoading ? (
+          <p className="text-muted fst-italic">No commits found for this branch comparison.</p>
+        ) : (
+          <div className="card shadow-sm">
+            <div className="card-body">
+              <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                <div>
+                  <div className="fw-semibold">palliativa/monorepo</div>
+                  {githubCompare && (
+                    <small className="text-muted">
+                      {githubCompare.base} → {githubCompare.head} · Ahead {githubCompare.ahead_by ?? 0} · Behind {githubCompare.behind_by ?? 0}
+                    </small>
+                  )}
+                </div>
+                {githubCompare && (
+                  <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
+                )}
+              </div>
+              <div className="table-responsive">
+                <table className="table table-striped align-middle">
+                  <thead>
+                    <tr>
+                      <th scope="col">Commit</th>
+                      <th scope="col">Message</th>
+                      <th scope="col">Tags</th>
+                      <th scope="col">Author</th>
+                      <th scope="col">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {githubCommits.map((commit) => (
+                      <tr key={commit.sha}>
+                        <td>
+                          {commit.link ? (
+                            <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                              {commit.sha?.slice(0, 7) ?? 'unknown'}
+                            </a>
+                          ) : (
+                            commit.sha?.slice(0, 7) ?? 'unknown'
+                          )}
+                        </td>
+                        <td>{commit.message || 'No message'}</td>
+                        <td>
+                          {Array.isArray(commit.tags) && commit.tags.length > 0 ? (
+                            commit.tags.map((tag) => (
+                              <span key={tag} className="badge text-bg-secondary me-1">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>{commit.author || 'Unknown'}</td>
+                        <td>{commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         )
       ) : (
         <TicketsList tickets={ticketsByView[activeView] || []} />

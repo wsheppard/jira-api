@@ -62,6 +62,9 @@ if not jira_token:
 bb_token = os.getenv("BITBUCKET_API_TOKEN")
 if not bb_token:
     raise RuntimeError("BITBUCKET_API_TOKEN environment variable must be set")
+github_token = os.getenv("GITHUB_TOKEN")
+if not github_token:
+    raise RuntimeError("GITHUB_TOKEN environment variable must be set")
 
 # Hard-code Jira instances
 configs: List[Dict[str, Any]] = [
@@ -341,6 +344,84 @@ async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
             }
         )
     return commits
+
+
+# ---------------------------------------------------------------------------
+# GitHub endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/github-branch-commits")
+async def github_branch_commits(
+    owner: str,
+    repo: str,
+    base: str = "master",
+    head: str = "codex/integration",
+) -> Dict[str, Any]:
+    """Return commits on head that are not reachable from base using GitHub compare API."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    data = resp.json()
+    commit_shas = [commit.get("sha") for commit in data.get("commits", []) if commit.get("sha")]
+    tags_by_commit: Dict[str, List[str]] = {}
+    if commit_shas:
+        tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+        page = 1
+        remaining = set(commit_shas)
+        async with httpx.AsyncClient() as client:
+            while remaining:
+                resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
+                if resp_t.status_code != 200:
+                    raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
+                values = resp_t.json()
+                if not values:
+                    break
+                for tag in values:
+                    tag_name = tag.get("name")
+                    tag_commit = (tag.get("commit") or {}).get("sha")
+                    if not tag_name or not tag_commit:
+                        continue
+                    tags_by_commit.setdefault(tag_commit, []).append(tag_name)
+                    if tag_commit in remaining:
+                        remaining.discard(tag_commit)
+                page += 1
+
+    commits: List[Dict[str, Any]] = []
+    for commit in data.get("commits", []):
+        commit_info = commit.get("commit") or {}
+        author_info = commit_info.get("author") or {}
+        raw_message = commit_info.get("message") or ""
+        sha = commit.get("sha")
+        commits.append(
+            {
+                "sha": sha,
+                "date": author_info.get("date"),
+                "author": author_info.get("name"),
+                "message": raw_message.split("\n")[0],
+                "link": commit.get("html_url"),
+                "tags": tags_by_commit.get(sha, []),
+            }
+        )
+    commits.sort(key=lambda item: item.get("date") or "", reverse=True)
+    return {
+        "owner": owner,
+        "repo": repo,
+        "base": base,
+        "head": head,
+        "ahead_by": data.get("ahead_by"),
+        "behind_by": data.get("behind_by"),
+        "total_commits": len(commits),
+        "commits": commits,
+    }
 
 
 async def fetch_all_deployments(
