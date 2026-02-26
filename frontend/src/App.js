@@ -4,6 +4,7 @@ import PipelineDashboard from './PipelineDashboard';
 import './App.css';
 
 const API_BASE_URL = 'https://jira.api.jjrsoftware.co.uk';
+const STAGING_VIEW_ID = 'codexIntegrationCommits';
 
 const VIEW_CONFIG = {
   open: { label: 'Open Tickets by Due Date', endpoint: 'open-issues-by-due', type: 'tickets' },
@@ -37,6 +38,19 @@ const VIEW_ORDER = [
 const DEFAULT_VIEW = 'open';
 
 const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
+const stagingVersionFromSearch = (search) => {
+  const params = new URLSearchParams(search || '');
+  return params.get('version') || 'next';
+};
+const urlForView = (viewId, stagingVersion = 'next') => {
+  const path = pathForView(viewId);
+  if (viewId !== STAGING_VIEW_ID) {
+    return path;
+  }
+  const params = new URLSearchParams();
+  params.set('version', stagingVersion || 'next');
+  return `${path}?${params.toString()}`;
+};
 
 const normalizePath = (path) => {
   if (!path) {
@@ -72,6 +86,9 @@ function App() {
   };
 
   const [activeView, setActiveView] = useState(deriveInitialView);
+  const [stagingVersion, setStagingVersion] = useState(
+    typeof window === 'undefined' ? 'next' : stagingVersionFromSearch(window.location.search),
+  );
   const [ticketsByView, setTicketsByView] = useState({
     open: [],
     inProgress: [],
@@ -85,6 +102,9 @@ function App() {
   const [githubCommits, setGithubCommits] = useState([]);
   const [githubCompare, setGithubCompare] = useState(null);
   const [stagingTickets, setStagingTickets] = useState([]);
+  const [stagingReleaseParent, setStagingReleaseParent] = useState(null);
+  const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
+  const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -199,11 +219,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
       } else if (config.type === 'githubCommits') {
         const [data, stagingData] = await Promise.all([
           fetchJson(config.endpoint),
-          fetchJson('staging-tickets?project=AP'),
+          fetchJson(`staging-tickets?project=AP&version=${encodeURIComponent(stagingVersion || 'next')}`),
         ]);
         setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
         setGithubCompare(data ?? null);
-        setStagingTickets(Array.isArray(stagingData) ? stagingData : []);
+        setStagingTickets(Array.isArray(stagingData?.tickets) ? stagingData.tickets : []);
+        setStagingReleaseParent(stagingData?.release_parent ?? null);
+        setStagingAvailableVersions(Array.isArray(stagingData?.available_versions) ? stagingData.available_versions : []);
+        setStagingResolvedVersion(stagingData?.resolved_version || '');
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -218,7 +241,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     } finally {
       markRequestEnd();
     }
-  }, [fetchJson, markRequestEnd, markRequestStart]);
+  }, [fetchJson, markRequestEnd, markRequestStart, stagingVersion]);
 
   const hideOffcanvas = useCallback(() => {
     const offcanvasElement = document.getElementById('viewSelector');
@@ -241,16 +264,16 @@ const [nextPollIn, setNextPollIn] = useState(30);
       return;
     }
     if (typeof window !== 'undefined') {
-      const newPath = pathForView(viewId);
-      window.history.pushState({ view: viewId }, '', newPath);
+      window.history.pushState({ view: viewId }, '', urlForView(viewId, stagingVersion));
     }
     setActiveView(viewId);
     hideOffcanvas();
-  }, [activeView, fetchViewData, hideOffcanvas]);
+  }, [activeView, fetchViewData, hideOffcanvas, stagingVersion]);
 
   useEffect(() => {
     const onPopState = () => {
       const nextView = viewFromLocation(window.location.pathname);
+      setStagingVersion(stagingVersionFromSearch(window.location.search));
       setActiveView((prev) => (prev === nextView ? prev : nextView));
     };
     window.addEventListener('popstate', onPopState);
@@ -259,14 +282,23 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !hasSyncedInitialPath.current) {
-      const desiredPath = pathForView(activeView);
-      if (window.location.pathname !== desiredPath) {
-        window.history.replaceState({ view: activeView }, '', desiredPath);
+      const desiredUrl = urlForView(activeView, stagingVersion);
+      const currentUrl = `${window.location.pathname}${window.location.search || ''}`;
+      if (currentUrl !== desiredUrl) {
+        window.history.replaceState({ view: activeView }, '', desiredUrl);
       }
       hasSyncedInitialPath.current = true;
     }
     fetchViewData(activeView);
-  }, [activeView, fetchViewData]);
+  }, [activeView, fetchViewData, stagingVersion]);
+
+  const handleStagingVersionChange = useCallback((nextVersion) => {
+    const value = nextVersion || 'next';
+    setStagingVersion(value);
+    if (typeof window !== 'undefined' && activeView === STAGING_VIEW_ID) {
+      window.history.pushState({ view: STAGING_VIEW_ID }, '', urlForView(STAGING_VIEW_ID, value));
+    }
+  }, [activeView]);
 
   useEffect(() => {
     const baseTitle = 'JJR Jira Dashboard';
@@ -463,6 +495,46 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
                   )}
                 </div>
+              </div>
+              <div className="mb-3 border rounded p-2">
+                <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+                  <span className="fw-semibold">Release Scope</span>
+                  <label htmlFor="stagingVersionSelect" className="small text-muted">Version</label>
+                  <select
+                    id="stagingVersionSelect"
+                    className="form-select form-select-sm"
+                    style={{ width: 'auto' }}
+                    value={stagingVersion}
+                    onChange={(event) => handleStagingVersionChange(event.target.value)}
+                  >
+                    <option value="next">next</option>
+                    {stagingVersion !== 'next' && !stagingAvailableVersions.includes(stagingVersion) && (
+                      <option value={stagingVersion}>{stagingVersion}</option>
+                    )}
+                    {stagingAvailableVersions.map((versionName) => (
+                      <option key={versionName} value={versionName}>{versionName}</option>
+                    ))}
+                  </select>
+                  {stagingResolvedVersion && (
+                    <span className="badge text-bg-light border">Resolved: {stagingResolvedVersion}</span>
+                  )}
+                </div>
+                {stagingReleaseParent ? (
+                  <div className="border rounded p-2 bg-warning-subtle">
+                    <div className="d-flex flex-wrap align-items-center gap-2">
+                      <a href={stagingReleaseParent.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                        {stagingReleaseParent.ticket}
+                      </a>
+                      <span>{stagingReleaseParent.title}</span>
+                      {stagingReleaseParent.statusName && <span className="badge text-bg-secondary">{stagingReleaseParent.statusName}</span>}
+                      {Array.isArray(stagingReleaseParent.fixVersions) && stagingReleaseParent.fixVersions.length > 0 && (
+                        <span className="badge text-bg-light border">{stagingReleaseParent.fixVersions.join(', ')}</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-muted small">No release-train parent ticket found for this version.</div>
+                )}
               </div>
               {stagingTickets.length > 0 && (
                 <div className="mb-3">

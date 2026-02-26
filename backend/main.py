@@ -626,20 +626,51 @@ async def github_branch_commits(
     }
 
 
+def _semver_key(version_name: str) -> Tuple[int, ...]:
+    parts = [part for part in re.split(r"[^\d]+", version_name) if part]
+    return tuple(int(part) for part in parts)
+
+
 @app.get("/staging-tickets")
-async def staging_tickets(project: str = "AP") -> List[Dict[str, Any]]:
-    """Return release-train / RC / test-execution tickets for staging visibility."""
+async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[str, Any]:
+    """Return staging tickets for a release version; version=next resolves the next unreleased Jira version."""
     cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
     if not cfg:
         raise RuntimeError("Palliativa Jira config not found")
 
+    headers = {"Content-Type": "application/json"}
+    base_url = cfg["base_url"].rstrip("/")
+    search_url = f"{base_url}/rest/api/3/search/jql"
+    versions_url = f"{base_url}/rest/api/3/project/{project}/versions"
+
+    async with httpx.AsyncClient() as client:
+        versions_resp = await client.get(
+            versions_url,
+            auth=(cfg["email"], cfg["token"]),
+            headers=headers,
+        )
+    if versions_resp.status_code != 200:
+        raise HTTPException(status_code=versions_resp.status_code, detail=versions_resp.text)
+
+    versions_payload = versions_resp.json() or []
+    candidate_versions = [
+        item.get("name")
+        for item in versions_payload
+        if item and item.get("name") and not item.get("released") and not item.get("archived")
+    ]
+    candidate_versions = sorted(set(candidate_versions), key=_semver_key)
+    resolved_version = version
+    if version == "next":
+        if not candidate_versions:
+            raise HTTPException(status_code=404, detail=f'No unreleased versions found for project "{project}"')
+        resolved_version = candidate_versions[0]
+
     jql = (
-        f'project = "{project}" AND labels in ("release-train", "rc-candidate", "test-execution", "codex-integration") '
+        f'project = "{project}" AND fixVersion = "{resolved_version}" '
+        'AND labels in ("release-train", "rc-candidate", "test-execution", "codex-integration") '
         "ORDER BY created DESC"
     )
     fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated"]
-    headers = {"Content-Type": "application/json"}
-    search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             search_url,
@@ -650,22 +681,37 @@ async def staging_tickets(project: str = "AP") -> List[Dict[str, Any]]:
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
+    release_parent: Dict[str, Any] | None = None
     results: List[Dict[str, Any]] = []
     for issue in resp.json().get("issues", []):
         fields_data = issue.get("fields", {}) or {}
-        results.append(
-            {
-                "ticket": issue.get("key"),
-                "title": fields_data.get("summary") or "",
-                "statusName": (fields_data.get("status") or {}).get("name") or "",
-                "issuetype": (fields_data.get("issuetype") or {}).get("name") or "",
-                "labels": fields_data.get("labels") or [],
-                "fixVersions": [(item.get("name") or "") for item in (fields_data.get("fixVersions") or []) if item],
-                "updated": fields_data.get("updated"),
-                "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
-            }
-        )
-    return results
+        ticket_data = {
+            "ticket": issue.get("key"),
+            "title": fields_data.get("summary") or "",
+            "statusName": (fields_data.get("status") or {}).get("name") or "",
+            "issuetype": (fields_data.get("issuetype") or {}).get("name") or "",
+            "labels": fields_data.get("labels") or [],
+            "fixVersions": [(item.get("name") or "") for item in (fields_data.get("fixVersions") or []) if item],
+            "updated": fields_data.get("updated"),
+            "link": f"{base_url}/browse/{issue.get('key')}",
+        }
+        if "release-train" in ticket_data["labels"] and release_parent is None:
+            release_parent = ticket_data
+        else:
+            results.append(ticket_data)
+    if release_parent is None:
+        release_parent = next((item for item in results if "release-train" in item.get("labels", [])), None)
+        if release_parent:
+            results = [item for item in results if item.get("ticket") != release_parent.get("ticket")]
+
+    return {
+        "project": project,
+        "requested_version": version,
+        "resolved_version": resolved_version,
+        "available_versions": candidate_versions,
+        "release_parent": release_parent,
+        "tickets": results,
+    }
 
 
 async def fetch_all_deployments(
