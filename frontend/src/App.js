@@ -599,11 +599,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               )}
                             </div>
                           )}
-                          {group.key !== 'NO-JIRA' && group.title && (
-                            <div className="text-muted flex-grow-1" title={group.title}>
-                              {group.title}
-                            </div>
-                          )}
+                        {group.key !== 'NO-JIRA' && group.title && (
+                          <div className="text-muted flex-grow-1 staging-group-title" title={group.title}>
+                            {group.title}
+                          </div>
+                        )}
                           {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
                           <span className="badge text-bg-light border">{group.commits.length} commits</span>
                         </div>

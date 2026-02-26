@@ -197,3 +197,10 @@
   color: #084298;
   border: 1px solid #9ec5fe;
 }
+
+.staging-group-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
