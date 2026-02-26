@@ -115,6 +115,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const groupOrderRef = useRef(new Map());
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
+  const pollIntervalMs = activeConfig?.type === 'githubCommits' ? 300000 : 30000;
+  const pollIntervalSeconds = Math.floor(pollIntervalMs / 1000);
 
   const markRequestStart = useCallback(() => {
     pendingRequests.current += 1;
@@ -203,7 +205,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     if (!config) {
       return;
     }
-    setNextPollIn(30);
+    setNextPollIn(pollIntervalSeconds);
 
     markRequestStart();
     setErrorMessage('');
@@ -249,7 +251,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     } finally {
       markRequestEnd();
     }
-  }, [fetchJson, markRequestEnd, markRequestStart, stagingVersion]);
+  }, [fetchJson, markRequestEnd, markRequestStart, pollIntervalSeconds, stagingVersion]);
 
   const hideOffcanvas = useCallback(() => {
     const offcanvasElement = document.getElementById('viewSelector');
@@ -320,9 +322,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
   useEffect(() => {
     const interval = setInterval(() => {
       fetchViewData(activeView);
-    }, 30000);
+    }, pollIntervalMs);
     return () => clearInterval(interval);
-  }, [activeView, fetchViewData]);
+  }, [activeView, fetchViewData, pollIntervalMs]);
   useEffect(() => {
     const interval = setInterval(() => {
       setNextPollIn(prev => Math.max(0, prev - 1));

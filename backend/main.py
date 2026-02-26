@@ -79,6 +79,9 @@ configs: List[Dict[str, Any]] = [
 JIRA_CACHE_TTL_SECONDS = int(os.getenv("JIRA_CACHE_TTL_SECONDS", "20"))
 _jira_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[float, List[Dict[str, Any]]]] = {}
 _jira_cache_lock = asyncio.Lock()
+GITHUB_COMPARE_CACHE_TTL_SECONDS = int(os.getenv("GITHUB_COMPARE_CACHE_TTL_SECONDS", "120"))
+_github_compare_cache: Dict[Tuple[str, str, str, str], Tuple[float, Dict[str, Any]]] = {}
+_github_compare_cache_lock = asyncio.Lock()
 
 
 def _adf_to_text(node: Any) -> str:
@@ -442,6 +445,18 @@ async def github_branch_commits(
     head: str = "codex/integration",
 ) -> Dict[str, Any]:
     """Return commits on codex/integration that are not reachable from base."""
+    cache_key = (owner, repo, base, head)
+    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
+        now = time.monotonic()
+        async with _github_compare_cache_lock:
+            cached = _github_compare_cache.get(cache_key)
+            if cached:
+                cached_at, cached_payload = cached
+                if now - cached_at < GITHUB_COMPARE_CACHE_TTL_SECONDS:
+                    logger.info("Serving cached GitHub compare response for %s/%s %s...%s", owner, repo, base, head)
+                    return copy.deepcopy(cached_payload)
+                _github_compare_cache.pop(cache_key, None)
+
     pr_number_regexes = [
         re.compile(r"merge pull request #(?P<num>\d+)", re.IGNORECASE),
         re.compile(r"\(#(?P<num>\d+)\)"),
@@ -614,7 +629,7 @@ async def github_branch_commits(
         )
     commits.sort(key=lambda item: item.get("date") or "", reverse=True)
 
-    return {
+    payload = {
         "owner": owner,
         "repo": repo,
         "base": base,
@@ -625,6 +640,10 @@ async def github_branch_commits(
         "total_commits": len(commits),
         "commits": commits,
     }
+    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
+        async with _github_compare_cache_lock:
+            _github_compare_cache[cache_key] = (time.monotonic(), copy.deepcopy(payload))
+    return payload
 
 
 def _semver_key(version_name: str) -> Tuple[int, ...]:
