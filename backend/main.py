@@ -626,6 +626,48 @@ async def github_branch_commits(
     }
 
 
+@app.get("/staging-tickets")
+async def staging_tickets(project: str = "AP") -> List[Dict[str, Any]]:
+    """Return release-train / RC / test-execution tickets for staging visibility."""
+    cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
+    if not cfg:
+        raise RuntimeError("Palliativa Jira config not found")
+
+    jql = (
+        f'project = "{project}" AND labels in ("release-train", "rc-candidate", "test-execution", "codex-integration") '
+        "ORDER BY created DESC"
+    )
+    fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated"]
+    headers = {"Content-Type": "application/json"}
+    search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            search_url,
+            auth=(cfg["email"], cfg["token"]),
+            headers=headers,
+            json={"jql": jql, "fields": fields},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    results: List[Dict[str, Any]] = []
+    for issue in resp.json().get("issues", []):
+        fields_data = issue.get("fields", {}) or {}
+        results.append(
+            {
+                "ticket": issue.get("key"),
+                "title": fields_data.get("summary") or "",
+                "statusName": (fields_data.get("status") or {}).get("name") or "",
+                "issuetype": (fields_data.get("issuetype") or {}).get("name") or "",
+                "labels": fields_data.get("labels") or [],
+                "fixVersions": [(item.get("name") or "") for item in (fields_data.get("fixVersions") or []) if item],
+                "updated": fields_data.get("updated"),
+                "link": f"{cfg['base_url'].rstrip('/')}/browse/{issue.get('key')}",
+            }
+        )
+    return results
+
+
 async def fetch_all_deployments(
     client: httpx.AsyncClient,
     auth: Tuple[str, str],

@@ -15,7 +15,7 @@ const VIEW_CONFIG = {
   codexMoreInfo: { label: 'Codex More Info', endpoint: 'codex-more-info', type: 'tickets' },
   codexImplemented: { label: 'Codex Implemented', endpoint: 'codex-implemented', type: 'tickets' },
   codexIntegrationCommits: {
-    label: 'Codex Integration Commits',
+    label: 'Staging View',
     endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=master&head=codex/integration',
     type: 'githubCommits',
   },
@@ -84,6 +84,7 @@ function App() {
   });
   const [githubCommits, setGithubCommits] = useState([]);
   const [githubCompare, setGithubCompare] = useState(null);
+  const [stagingTickets, setStagingTickets] = useState([]);
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -196,9 +197,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
           setPipelineCategories([]);
         }
       } else if (config.type === 'githubCommits') {
-        const data = await fetchJson(config.endpoint);
+        const [data, stagingData] = await Promise.all([
+          fetchJson(config.endpoint),
+          fetchJson('staging-tickets?project=AP'),
+        ]);
         setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
         setGithubCompare(data ?? null);
+        setStagingTickets(Array.isArray(stagingData) ? stagingData : []);
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -459,6 +464,27 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   )}
                 </div>
               </div>
+              {stagingTickets.length > 0 && (
+                <div className="mb-3">
+                  <div className="fw-semibold mb-2">Staging Tickets</div>
+                  <div className="d-flex flex-column gap-2">
+                    {stagingTickets.map((ticket) => (
+                      <div key={ticket.ticket} className="border rounded p-2">
+                        <div className="d-flex flex-wrap align-items-center gap-2">
+                          <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                            {ticket.ticket}
+                          </a>
+                          <span className="text-muted">{ticket.title}</span>
+                          {ticket.statusName && <span className="badge text-bg-secondary">{ticket.statusName}</span>}
+                          {Array.isArray(ticket.fixVersions) && ticket.fixVersions.length > 0 && (
+                            <span className="badge text-bg-light border">{ticket.fixVersions.join(', ')}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="row g-3">
                 {buildCommitGroups().map((group) => (
                   <div className="col-12 col-xl-6" key={group.key}>
