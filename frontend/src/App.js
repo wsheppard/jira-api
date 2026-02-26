@@ -516,7 +516,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     {stagingVersion !== 'next' && !stagingAvailableVersions.includes(stagingVersion) && (
                       <option value={stagingVersion}>{stagingVersion}</option>
                     )}
-                    {stagingAvailableVersions.map((versionName) => (
+                    {stagingAvailableVersions.filter((versionName) => versionName !== stagingNextVersion).map((versionName) => (
                       <option key={versionName} value={versionName}>{versionName}</option>
                     ))}
                   </select>
