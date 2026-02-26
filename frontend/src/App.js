@@ -584,32 +584,38 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   {buildCommitGroups().map((group) => (
                   <div className="col-12 col-xl-6" key={group.key}>
                     <div className="card h-100">
-                      <div className="card-header d-flex align-items-center gap-3">
-                        {group.key === 'NO-JIRA' ? (
-                          <span className="fw-semibold">No Jira</span>
-                        ) : (
-                          <div className="d-flex align-items-center gap-2 flex-shrink-0">
-                            {group.link ? (
-                              <a href={group.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                                {group.key}
-                              </a>
-                            ) : (
-                              <span className="fw-semibold">{group.key}</span>
-                            )}
+                      <div className="card-header">
+                        <div className="d-flex flex-wrap align-items-center gap-2">
+                          {group.key === 'NO-JIRA' ? (
+                            <span className="fw-semibold">No Jira</span>
+                          ) : (
+                            <div className="d-flex align-items-center gap-2 flex-shrink-0">
+                              {group.link ? (
+                                <a href={group.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                                  {group.key}
+                                </a>
+                              ) : (
+                                <span className="fw-semibold">{group.key}</span>
+                              )}
+                            </div>
+                          )}
+                          {group.key !== 'NO-JIRA' && group.title && (
+                            <div className="text-muted flex-grow-1" title={group.title}>
+                              {group.title}
+                            </div>
+                          )}
+                          {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
+                          <span className="badge text-bg-light border">{group.commits.length} commits</span>
+                        </div>
+                        {Array.isArray(group.labels) && group.labels.length > 0 && (
+                          <div className="d-flex flex-wrap gap-1 mt-2">
+                            {group.labels.map((label) => (
+                              <span key={`${group.key}-label-${label}`} className="badge staging-label-badge">
+                                {label}
+                              </span>
+                            ))}
                           </div>
                         )}
-                        {group.key !== 'NO-JIRA' && group.title && (
-                          <div className="text-muted text-truncate flex-grow-1" title={group.title}>
-                            {group.title}
-                          </div>
-                        )}
-                        {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
-                        {Array.isArray(group.labels) && group.labels.map((label) => (
-                          <span key={`${group.key}-label-${label}`} className="badge staging-label-badge">
-                            {label}
-                          </span>
-                        ))}
-                        <span className="badge text-bg-light border">{group.commits.length} commits</span>
                       </div>
                       <ul className="list-group list-group-flush">
                         {group.commits.map((commit) => {
