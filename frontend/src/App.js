@@ -340,6 +340,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
           key: groupKey,
           title: meta?.summary || '',
           status: meta?.status || '',
+          labels: Array.isArray(meta?.labels) ? meta.labels : [],
           link: meta?.link || '',
           commits: [],
         });
@@ -535,6 +536,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       {Array.isArray(stagingReleaseParent.fixVersions) && stagingReleaseParent.fixVersions.length > 0 && (
                         <span className="badge text-bg-light border">{stagingReleaseParent.fixVersions.join(', ')}</span>
                       )}
+                      {Array.isArray(stagingReleaseParent.labels) && stagingReleaseParent.labels.map((label) => (
+                        <span key={`${stagingReleaseParent.ticket}-${label}`} className="badge staging-label-badge">
+                          {label}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 ) : (
@@ -598,6 +604,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           </div>
                         )}
                         {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
+                        {Array.isArray(group.labels) && group.labels.map((label) => (
+                          <span key={`${group.key}-label-${label}`} className="badge staging-label-badge">
+                            {label}
+                          </span>
+                        ))}
                         <span className="badge text-bg-light border">{group.commits.length} commits</span>
                       </div>
                       <ul className="list-group list-group-flush">

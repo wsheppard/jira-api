@@ -213,12 +213,12 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
     return flattened
 
 
-async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
+async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:
     """Fetch Jira status and link for AP/PD issues in the palliativa instance."""
     if not keys:
         return {}
     unique_keys = sorted(set(keys))
-    fields = ["status", "summary", "key"]
+    fields = ["status", "summary", "key", "labels"]
     jql = f"key in ({', '.join(unique_keys)})"
     headers = {"Content-Type": "application/json"}
     cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
@@ -240,6 +240,7 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, str]]:
                 "key": key,
                 "status": status or "",
                 "summary": summary,
+                "labels": fields_data.get("labels") or [],
                 "link": f"{cfg['base_url'].rstrip('/')}/browse/{key}",
             }
     return results
