@@ -82,6 +82,14 @@ _jira_cache_lock = asyncio.Lock()
 GITHUB_COMPARE_CACHE_TTL_SECONDS = int(os.getenv("GITHUB_COMPARE_CACHE_TTL_SECONDS", "120"))
 _github_compare_cache: Dict[Tuple[str, str, str, str], Tuple[float, Dict[str, Any]]] = {}
 _github_compare_cache_lock = asyncio.Lock()
+GITHUB_TAGS_CACHE_TTL_SECONDS = int(os.getenv("GITHUB_TAGS_CACHE_TTL_SECONDS", "900"))
+_github_tags_cache: Dict[Tuple[str, str], Tuple[float, Dict[str, List[str]]]] = {}
+_github_tags_cache_lock = asyncio.Lock()
+GITHUB_PR_CACHE_TTL_SECONDS = int(os.getenv("GITHUB_PR_CACHE_TTL_SECONDS", "900"))
+_github_pr_detail_cache: Dict[Tuple[str, str, int], Tuple[float, Dict[str, str] | None]] = {}
+_github_pr_detail_cache_lock = asyncio.Lock()
+_github_pr_commits_cache: Dict[Tuple[str, str, int], Tuple[float, List[Dict[str, str]]]] = {}
+_github_pr_commits_cache_lock = asyncio.Lock()
 
 
 def _adf_to_text(node: Any) -> str:
@@ -543,28 +551,44 @@ async def github_branch_commits(
     tags_by_commit: Dict[str, List[str]] = {}
     latest_tag: str | None = None
     if commit_shas:
-        tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
-        remaining = set(commit_shas)
-        page = 1
-        async with httpx.AsyncClient() as client:
-            while remaining or latest_tag is None:
-                resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
-                if resp_t.status_code != 200:
-                    raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
-                values = resp_t.json()
-                if not values:
-                    break
-                for tag in values:
-                    tag_name = tag.get("name")
-                    tag_commit = (tag.get("commit") or {}).get("sha")
-                    if not tag_name or not tag_commit:
-                        continue
-                    tags_by_commit.setdefault(tag_commit, []).append(tag_name)
-                    if tag_commit in remaining:
-                        remaining.discard(tag_commit)
-                    if head_sha and tag_commit == head_sha and latest_tag is None:
-                        latest_tag = tag_name
-                page += 1
+        tags_cache_key = (owner, repo)
+        if GITHUB_TAGS_CACHE_TTL_SECONDS > 0:
+            now = time.monotonic()
+            async with _github_tags_cache_lock:
+                cached_tags = _github_tags_cache.get(tags_cache_key)
+                if cached_tags:
+                    cached_at, cached_payload = cached_tags
+                    if now - cached_at < GITHUB_TAGS_CACHE_TTL_SECONDS:
+                        tags_by_commit = copy.deepcopy(cached_payload)
+                    else:
+                        _github_tags_cache.pop(tags_cache_key, None)
+        if not tags_by_commit:
+            tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+            page = 1
+            fetched_map: Dict[str, List[str]] = {}
+            async with httpx.AsyncClient() as client:
+                while True:
+                    resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
+                    if resp_t.status_code != 200:
+                        raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
+                    values = resp_t.json()
+                    if not values:
+                        break
+                    for tag in values:
+                        tag_name = tag.get("name")
+                        tag_commit = (tag.get("commit") or {}).get("sha")
+                        if not tag_name or not tag_commit:
+                            continue
+                        fetched_map.setdefault(tag_commit, []).append(tag_name)
+                    page += 1
+            tags_by_commit = fetched_map
+            if GITHUB_TAGS_CACHE_TTL_SECONDS > 0:
+                async with _github_tags_cache_lock:
+                    _github_tags_cache[tags_cache_key] = (time.monotonic(), copy.deepcopy(tags_by_commit))
+        if head_sha:
+            head_tags = tags_by_commit.get(head_sha, [])
+            if head_tags:
+                latest_tag = head_tags[0]
 
     commit_pr_numbers: Dict[str, List[int]] = {}
     unique_pr_numbers: set[int] = set()
@@ -580,10 +604,53 @@ async def github_branch_commits(
     async def load_pr_data(
         pr_client: httpx.AsyncClient, pr_number: int
     ) -> Tuple[int, Dict[str, str] | None, List[Dict[str, str]]]:
-        pr_detail, pr_commits = await asyncio.gather(
-            fetch_pr_details(pr_client, headers, owner, repo, pr_number),
-            fetch_pr_commits(pr_client, headers, owner, repo, pr_number),
-        )
+        detail_key = (owner, repo, pr_number)
+        commits_key = (owner, repo, pr_number)
+        pr_detail: Dict[str, str] | None = None
+        pr_commits: List[Dict[str, str]] = []
+
+        detail_cached = False
+        commits_cached = False
+        if GITHUB_PR_CACHE_TTL_SECONDS > 0:
+            now = time.monotonic()
+            async with _github_pr_detail_cache_lock:
+                cached_detail = _github_pr_detail_cache.get(detail_key)
+                if cached_detail:
+                    cached_at, payload = cached_detail
+                    if now - cached_at < GITHUB_PR_CACHE_TTL_SECONDS:
+                        pr_detail = copy.deepcopy(payload) if payload else None
+                        detail_cached = True
+                    else:
+                        _github_pr_detail_cache.pop(detail_key, None)
+            async with _github_pr_commits_cache_lock:
+                cached_commits = _github_pr_commits_cache.get(commits_key)
+                if cached_commits:
+                    cached_at, payload = cached_commits
+                    if now - cached_at < GITHUB_PR_CACHE_TTL_SECONDS:
+                        pr_commits = copy.deepcopy(payload)
+                        commits_cached = True
+                    else:
+                        _github_pr_commits_cache.pop(commits_key, None)
+
+        tasks = []
+        if not detail_cached:
+            tasks.append(("detail", fetch_pr_details(pr_client, headers, owner, repo, pr_number)))
+        if not commits_cached:
+            tasks.append(("commits", fetch_pr_commits(pr_client, headers, owner, repo, pr_number)))
+        if tasks:
+            results = await asyncio.gather(*(task for _, task in tasks))
+            for (kind, _), value in zip(tasks, results):
+                if kind == "detail":
+                    pr_detail = value
+                elif kind == "commits":
+                    pr_commits = value
+
+        if GITHUB_PR_CACHE_TTL_SECONDS > 0:
+            async with _github_pr_detail_cache_lock:
+                _github_pr_detail_cache[detail_key] = (time.monotonic(), copy.deepcopy(pr_detail) if pr_detail else None)
+            async with _github_pr_commits_cache_lock:
+                _github_pr_commits_cache[commits_key] = (time.monotonic(), copy.deepcopy(pr_commits))
+
         return pr_number, pr_detail, pr_commits
 
     pr_cache: Dict[int, Dict[str, str]] = {}
