@@ -191,3 +191,9 @@
 .nested-commit-item.is-last .connector-lane::before {
   bottom: calc(50% - 1px);
 }
+
+.staging-label-badge {
+  background: #e7f3ff;
+  color: #084298;
+  border: 1px solid #9ec5fe;
+}

@@ -557,7 +557,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             <span className="badge text-bg-light border">{ticket.fixVersions.join(', ')}</span>
                           )}
                           {Array.isArray(ticket.labels) && ticket.labels.map((label) => (
-                            <span key={`${ticket.ticket}-${label}`} className="badge text-bg-info-subtle border">
+                            <span key={`${ticket.ticket}-${label}`} className="badge staging-label-badge">
                               {label}
                             </span>
                           ))}
