@@ -653,17 +653,31 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         raise HTTPException(status_code=versions_resp.status_code, detail=versions_resp.text)
 
     versions_payload = versions_resp.json() or []
-    candidate_versions = [
+    unreleased_versions = [
         item.get("name")
         for item in versions_payload
         if item and item.get("name") and not item.get("released") and not item.get("archived")
     ]
-    candidate_versions = sorted(set(candidate_versions), key=_semver_key)
+    unreleased_versions = sorted(set(unreleased_versions), key=_semver_key)
+    released_versions = sorted(
+        {
+            item.get("name")
+            for item in versions_payload
+            if item and item.get("name") and item.get("released") and not item.get("archived")
+        },
+        key=_semver_key,
+        reverse=True,
+    )
+    available_versions: List[str] = []
+    for name in unreleased_versions + released_versions[:12]:
+        if name not in available_versions:
+            available_versions.append(name)
+
     resolved_version = version
     if version == "next":
-        if not candidate_versions:
+        if not unreleased_versions:
             raise HTTPException(status_code=404, detail=f'No unreleased versions found for project "{project}"')
-        resolved_version = candidate_versions[0]
+        resolved_version = unreleased_versions[0]
 
     jql = (
         f'project = "{project}" AND fixVersion = "{resolved_version}" '
@@ -708,7 +722,8 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         "project": project,
         "requested_version": version,
         "resolved_version": resolved_version,
-        "available_versions": candidate_versions,
+        "available_versions": available_versions,
+        "next_version": unreleased_versions[0] if unreleased_versions else None,
         "release_parent": release_parent,
         "tickets": results,
     }

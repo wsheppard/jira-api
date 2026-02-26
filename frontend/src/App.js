@@ -105,6 +105,7 @@ function App() {
   const [stagingReleaseParent, setStagingReleaseParent] = useState(null);
   const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
   const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
+  const [stagingNextVersion, setStagingNextVersion] = useState('');
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -227,6 +228,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         setStagingReleaseParent(stagingData?.release_parent ?? null);
         setStagingAvailableVersions(Array.isArray(stagingData?.available_versions) ? stagingData.available_versions : []);
         setStagingResolvedVersion(stagingData?.resolved_version || '');
+        setStagingNextVersion(stagingData?.next_version || '');
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -507,7 +509,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     value={stagingVersion}
                     onChange={(event) => handleStagingVersionChange(event.target.value)}
                   >
-                    <option value="next">next</option>
+                    <option value="next">{stagingNextVersion ? `next (${stagingNextVersion})` : 'next'}</option>
                     {stagingVersion !== 'next' && !stagingAvailableVersions.includes(stagingVersion) && (
                       <option value={stagingVersion}>{stagingVersion}</option>
                     )}
