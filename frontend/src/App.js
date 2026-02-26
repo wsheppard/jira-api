@@ -218,17 +218,23 @@ const [nextPollIn, setNextPollIn] = useState(30);
           setPipelineCategories([]);
         }
       } else if (config.type === 'githubCommits') {
-        const [data, stagingData] = await Promise.all([
-          fetchJson(config.endpoint),
-          fetchJson(`staging-tickets?project=AP&version=${encodeURIComponent(stagingVersion || 'next')}`),
-        ]);
-        setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
-        setGithubCompare(data ?? null);
+        const stagingData = await fetchJson(`staging-tickets?project=AP&version=${encodeURIComponent(stagingVersion || 'next')}`);
         setStagingTickets(Array.isArray(stagingData?.tickets) ? stagingData.tickets : []);
         setStagingReleaseParent(stagingData?.release_parent ?? null);
         setStagingAvailableVersions(Array.isArray(stagingData?.available_versions) ? stagingData.available_versions : []);
         setStagingResolvedVersion(stagingData?.resolved_version || '');
         setStagingNextVersion(stagingData?.next_version || '');
+        const selectedVersion = stagingData?.resolved_version || '';
+        const nextVersion = stagingData?.next_version || '';
+        const shouldShowLiveCommits = Boolean(selectedVersion && nextVersion && selectedVersion === nextVersion);
+        if (shouldShowLiveCommits) {
+          const data = await fetchJson(config.endpoint);
+          setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
+          setGithubCompare(data ?? null);
+        } else {
+          setGithubCommits([]);
+          setGithubCompare(null);
+        }
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -470,11 +476,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
           <PipelineDashboard data={pipelineData} categories={pipelineCategories} />
         )
       ) : activeConfig?.type === 'githubCommits' ? (
-        githubCommits.length === 0 && !isLoading ? (
-          <p className="text-muted fst-italic">No commits found for this branch comparison.</p>
-        ) : (
-          <div className="card shadow-sm">
-            <div className="card-body">
+        <div className="card shadow-sm">
+          <div className="card-body">
               <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
                 <div>
                   <div className="fw-semibold d-flex align-items-center gap-2">
@@ -564,8 +567,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </div>
                 </div>
               )}
-              <div className="row g-3">
-                {buildCommitGroups().map((group) => (
+              {stagingResolvedVersion && stagingNextVersion && stagingResolvedVersion !== stagingNextVersion ? (
+                <div className="alert alert-secondary mb-0">
+                  Commit timeline is only shown for the next release ({stagingNextVersion}).
+                </div>
+              ) : githubCommits.length === 0 && !isLoading ? (
+                <p className="text-muted fst-italic mb-0">No commits found for this branch comparison.</p>
+              ) : (
+                <div className="row g-3">
+                  {buildCommitGroups().map((group) => (
                   <div className="col-12 col-xl-6" key={group.key}>
                     <div className="card h-100">
                       <div className="card-header d-flex align-items-center gap-3">
@@ -671,11 +681,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       </ul>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                  ))}
+                </div>
+              )}
           </div>
-        )
+        </div>
       ) : (
         <TicketsList tickets={ticketsByView[activeView] || []} />
       )}
