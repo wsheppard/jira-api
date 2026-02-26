@@ -199,12 +199,13 @@
 }
 
 .staging-group-title {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .staging-ticket-line {
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scrollbar-width: thin;
+  align-items: flex-start;
+  min-width: 0;
 }
