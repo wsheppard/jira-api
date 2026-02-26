@@ -585,7 +585,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <div className="col-12 col-xl-6" key={group.key}>
                     <div className="card h-100">
                       <div className="card-header">
-                        <div className="d-flex flex-wrap align-items-center gap-2">
+                        <div className="d-flex align-items-center gap-2 flex-nowrap staging-ticket-line">
                           {group.key === 'NO-JIRA' ? (
                             <span className="fw-semibold">No Jira</span>
                           ) : (
@@ -599,11 +599,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                               )}
                             </div>
                           )}
-                        {group.key !== 'NO-JIRA' && group.title && (
-                          <div className="text-muted flex-grow-1 staging-group-title" title={group.title}>
-                            {group.title}
-                          </div>
-                        )}
+                          {group.key !== 'NO-JIRA' && group.title && (
+                            <div className="text-muted staging-group-title" title={group.title}>
+                              {group.title}
+                            </div>
+                          )}
                           {group.status && <span className="badge text-bg-secondary">{group.status}</span>}
                           <span className="badge text-bg-light border">{group.commits.length} commits</span>
                         </div>
