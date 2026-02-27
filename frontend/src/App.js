@@ -413,6 +413,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
     ));
   };
 
+  const isReadyForRelease = (statusName) =>
+    typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -528,8 +531,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   )}
                 </div>
                 {stagingReleaseParent ? (
-                  <div className="border rounded p-2 bg-warning-subtle">
-                    <div className="d-flex flex-wrap align-items-center gap-2">
+                  <div className={`card ${isReadyForRelease(stagingReleaseParent.statusName) ? 'staging-status-ready' : 'staging-status-not-ready'}`}>
+                    <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                       <a href={stagingReleaseParent.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
                         {stagingReleaseParent.ticket}
                       </a>
@@ -554,8 +557,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <div className="fw-semibold mb-2">Staging Tickets</div>
                   <div className="d-flex flex-column gap-2">
                     {stagingTickets.map((ticket) => (
-                      <div key={ticket.ticket} className="border rounded p-2">
-                        <div className="d-flex flex-wrap align-items-center gap-2">
+                      <div
+                        key={ticket.ticket}
+                        className={`card ${isReadyForRelease(ticket.statusName) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
+                      >
+                        <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                           <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
                             {ticket.ticket}
                           </a>
@@ -585,8 +591,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
                 <div className="row g-3">
                   {buildCommitGroups().map((group) => (
                   <div className="col-12 col-xl-6" key={group.key}>
-                    <div className="card h-100">
-                      <div className="card-header">
+                    <div
+                      className={`card h-100 ${
+                        group.key !== 'NO-JIRA'
+                          ? (isReadyForRelease(group.status) ? 'staging-status-ready' : 'staging-status-not-ready')
+                          : ''
+                      }`}
+                    >
+                      <div className={`card-header ${group.key !== 'NO-JIRA' ? 'staging-status-header' : ''}`}>
                         <div className="d-flex align-items-center gap-2 flex-nowrap staging-ticket-line">
                           {group.key === 'NO-JIRA' ? (
                             <span className="fw-semibold">No Jira</span>

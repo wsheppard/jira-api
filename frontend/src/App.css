@@ -209,3 +209,25 @@
   align-items: flex-start;
   min-width: 0;
 }
+
+.staging-status-not-ready {
+  animation: wiggle 5.5s ease-in-out infinite;
+}
+
+.staging-status-header {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+.staging-status-not-ready .staging-status-header {
+  background-color: #dc3545;
+  color: #fff;
+}
+
+.staging-status-ready .staging-status-header {
+  background-color: #198754;
+  color: #fff;
+}
+
+.staging-status-header a {
+  color: inherit;
+}
