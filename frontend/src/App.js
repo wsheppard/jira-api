@@ -669,7 +669,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                           <span className="fw-semibold">{item.key}</span>
                         )}
                         <span className="text-muted">{item.title}</span>
-                        {item.status && <span className="badge text-bg-secondary">{item.status}</span>}
+                        {item.status && (
+                          <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                            {item.status}
+                          </span>
+                        )}
                         {item.inBranch ? (
                           <span className="badge text-bg-success">MERGED</span>
                         ) : (
