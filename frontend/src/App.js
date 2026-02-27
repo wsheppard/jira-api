@@ -494,8 +494,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
         labels,
         inBranch,
         inRelease,
+        isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
       };
-    }).sort((a, b) => a.key.localeCompare(b.key));
+    }).sort((a, b) => {
+      if (a.isReleaseParent && !b.isReleaseParent) return -1;
+      if (!a.isReleaseParent && b.isReleaseParent) return 1;
+      return a.key.localeCompare(b.key);
+    });
   };
 
   const handleBackfillFixVersion = useCallback(async () => {
@@ -640,34 +645,16 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </button>
                 </div>
                 {backfillMessage && <div className="small text-muted mb-2">{backfillMessage}</div>}
-                {stagingReleaseParent ? (
-                  <div className={`card ${isReadyForRelease(stagingReleaseParent.statusName) ? 'staging-status-ready' : 'staging-status-not-ready'}`}>
-                    <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
-                      <a href={stagingReleaseParent.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                        {stagingReleaseParent.ticket}
-                      </a>
-                      <span>{stagingReleaseParent.title}</span>
-                      {stagingReleaseParent.statusName && <span className="badge text-bg-secondary">{stagingReleaseParent.statusName}</span>}
-                      {Array.isArray(stagingReleaseParent.fixVersions) && stagingReleaseParent.fixVersions.length > 0 && (
-                        <span className="badge text-bg-light border">{stagingReleaseParent.fixVersions.join(', ')}</span>
-                      )}
-                      {Array.isArray(stagingReleaseParent.labels) && stagingReleaseParent.labels.map((label) => (
-                        <span key={`${stagingReleaseParent.ticket}-${label}`} className="badge staging-label-badge">
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-muted small">No release-train parent ticket found for this version.</div>
-                )}
+                {!stagingReleaseParent && <div className="text-muted small">No release ticket found for this version.</div>}
               </div>
               <div className="mb-3">
-                <div className="fw-semibold mb-2">Release Reconciliation</div>
                 <div className="d-flex flex-column gap-2">
                   {buildReleaseReconciliation().map((item) => (
-                    <div key={item.key} className="border rounded p-2">
-                      <div className="d-flex flex-wrap align-items-center gap-2">
+                    <div
+                      key={item.key}
+                      className={`card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
+                    >
+                      <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                         {item.link ? (
                           <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
                             {item.key}
@@ -677,9 +664,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         )}
                         <span className="text-muted">{item.title}</span>
                         {item.status && <span className="badge text-bg-secondary">{item.status}</span>}
-                        {item.inBranch && item.inRelease && <span className="badge text-bg-success">In branch + release</span>}
-                        {!item.inBranch && item.inRelease && <span className="badge text-bg-warning">Release only</span>}
-                        {item.inBranch && !item.inRelease && <span className="badge text-bg-danger">Branch only (missing Fix Version)</span>}
+                        {item.inBranch ? (
+                          <span className="badge text-bg-success">MERGED</span>
+                        ) : (
+                          <span className="badge text-bg-danger">Not MERGED</span>
+                        )}
+                        {item.inBranch && !item.inRelease && (
+                          <span className="badge text-bg-warning">Missing Fix Version</span>
+                        )}
                         {Array.isArray(item.labels) && item.labels.map((label) => (
                           <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
                         ))}
@@ -688,35 +680,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   ))}
                 </div>
               </div>
-              {stagingTickets.length > 0 && (
-                <div className="mb-3">
-                  <div className="fw-semibold mb-2">Staging Tickets</div>
-                  <div className="d-flex flex-column gap-2">
-                    {stagingTickets.map((ticket) => (
-                      <div
-                        key={ticket.ticket}
-                        className={`card ${isReadyForRelease(ticket.statusName) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
-                      >
-                        <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
-                          <a href={ticket.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                            {ticket.ticket}
-                          </a>
-                          <span className="text-muted">{ticket.title}</span>
-                          {ticket.statusName && <span className="badge text-bg-secondary">{ticket.statusName}</span>}
-                          {Array.isArray(ticket.fixVersions) && ticket.fixVersions.length > 0 && (
-                            <span className="badge text-bg-light border">{ticket.fixVersions.join(', ')}</span>
-                          )}
-                          {Array.isArray(ticket.labels) && ticket.labels.map((label) => (
-                            <span key={`${ticket.ticket}-${label}`} className="badge staging-label-badge">
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
               {stagingResolvedVersion && stagingNextVersion && stagingResolvedVersion !== stagingNextVersion ? (
                 <div className="alert alert-secondary mb-0">
                   Commit timeline is only shown for the next release ({stagingNextVersion}).
