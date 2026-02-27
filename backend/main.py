@@ -755,10 +755,7 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         key=_semver_key,
         reverse=True,
     )
-    available_versions: List[str] = []
-    for name in unreleased_versions + released_versions[:12]:
-        if name not in available_versions:
-            available_versions.append(name)
+    available_versions = sorted(set(unreleased_versions + released_versions[:12]), key=_semver_key, reverse=True)
 
     resolved_version = version
     if version == "next":
