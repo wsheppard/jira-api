@@ -210,24 +210,21 @@
   min-width: 0;
 }
 
+.staging-card {
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  border-top: 4px solid transparent;
+}
+
 .staging-status-not-ready {
+  border-top-color: #dc3545;
   animation: wiggle 5.5s ease-in-out infinite;
 }
 
+.staging-status-ready {
+  border-top-color: #198754;
+}
+
 .staging-status-header {
-  transition: background-color 200ms ease, color 200ms ease;
-}
-
-.staging-status-not-ready .staging-status-header {
-  background-color: #dc3545;
-  color: #fff;
-}
-
-.staging-status-ready .staging-status-header {
-  background-color: #198754;
-  color: #fff;
-}
-
-.staging-status-header a {
+  background-color: transparent;
   color: inherit;
 }
