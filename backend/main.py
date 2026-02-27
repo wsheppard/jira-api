@@ -229,7 +229,7 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:
     if not keys:
         return {}
     unique_keys = sorted(set(keys))
-    fields = ["status", "summary", "key", "labels"]
+    fields = ["status", "summary", "key", "labels", "fixVersions"]
     jql = f"key in ({', '.join(unique_keys)})"
     headers = {"Content-Type": "application/json"}
     cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
@@ -252,6 +252,7 @@ async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:
                 "status": status or "",
                 "summary": summary,
                 "labels": fields_data.get("labels") or [],
+                "fixVersions": [(item.get("name") or "") for item in (fields_data.get("fixVersions") or []) if item],
                 "link": f"{cfg['base_url'].rstrip('/')}/browse/{key}",
             }
     return results
@@ -763,11 +764,7 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
             raise HTTPException(status_code=404, detail=f'No unreleased versions found for project "{project}"')
         resolved_version = unreleased_versions[0]
 
-    jql = (
-        f'project = "{project}" AND fixVersion = "{resolved_version}" '
-        'AND labels in ("release-train", "rc-candidate", "test-execution", "codex-integration") '
-        "ORDER BY created DESC"
-    )
+    jql = f'project = "{project}" AND fixVersion = "{resolved_version}" ORDER BY created DESC'
     fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated"]
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -793,12 +790,19 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
             "updated": fields_data.get("updated"),
             "link": f"{base_url}/browse/{issue.get('key')}",
         }
-        if "release-train" in ticket_data["labels"] and release_parent is None:
+        if ("release-ticket" in ticket_data["labels"] or "release-train" in ticket_data["labels"]) and release_parent is None:
             release_parent = ticket_data
         else:
             results.append(ticket_data)
     if release_parent is None:
-        release_parent = next((item for item in results if "release-train" in item.get("labels", [])), None)
+        release_parent = next(
+            (
+                item
+                for item in results
+                if "release-ticket" in item.get("labels", []) or "release-train" in item.get("labels", [])
+            ),
+            None,
+        )
         if release_parent:
             results = [item for item in results if item.get("ticket") != release_parent.get("ticket")]
 
@@ -810,6 +814,78 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         "next_version": unreleased_versions[0] if unreleased_versions else None,
         "release_parent": release_parent,
         "tickets": results,
+    }
+
+
+@app.post("/staging-backfill-fix-version")
+async def staging_backfill_fix_version(
+    version: str,
+    project: str = "AP",
+    owner: str = "palliativa",
+    repo: str = "monorepo",
+    base: str = "master",
+    head: str = "codex/integration",
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Backfill Jira Fix Version for tickets present in codex/integration commits but missing the given release version."""
+    project_prefix = f"{project.upper()}-"
+    compare_data = await github_branch_commits(owner=owner, repo=repo, base=base, head=head)
+    branch_keys: set[str] = set()
+    for commit in compare_data.get("commits", []):
+        for jira_item in commit.get("jira", []):
+            key = jira_item.get("key")
+            if key and key.upper().startswith(project_prefix):
+                branch_keys.add(key.upper())
+    if not branch_keys:
+        return {"project": project.upper(), "version": version, "dry_run": dry_run, "candidates": [], "updated": []}
+
+    cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
+    if not cfg:
+        raise RuntimeError("Palliativa Jira config not found")
+
+    search_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/search/jql"
+    headers = {"Content-Type": "application/json"}
+    jql = f"key in ({', '.join(sorted(branch_keys))})"
+    async with httpx.AsyncClient() as client:
+        search_resp = await client.post(
+            search_url,
+            auth=(cfg["email"], cfg["token"]),
+            headers=headers,
+            json={"jql": jql, "fields": ["key", "fixVersions"]},
+        )
+    if search_resp.status_code != 200:
+        raise HTTPException(status_code=search_resp.status_code, detail=search_resp.text)
+
+    missing: List[str] = []
+    for issue in search_resp.json().get("issues", []):
+        key = issue.get("key")
+        fix_versions = [(item.get("name") or "") for item in ((issue.get("fields") or {}).get("fixVersions") or []) if item]
+        if key and version not in fix_versions:
+            missing.append(key)
+
+    if dry_run or not missing:
+        return {"project": project.upper(), "version": version, "dry_run": dry_run, "candidates": sorted(branch_keys), "updated": []}
+
+    updated: List[str] = []
+    async with httpx.AsyncClient() as client:
+        for key in missing:
+            issue_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/issue/{key}"
+            update_resp = await client.put(
+                issue_url,
+                auth=(cfg["email"], cfg["token"]),
+                headers=headers,
+                json={"update": {"fixVersions": [{"add": {"name": version}}]}},
+            )
+            if update_resp.status_code != 204:
+                raise HTTPException(status_code=update_resp.status_code, detail=update_resp.text)
+            updated.append(key)
+
+    return {
+        "project": project.upper(),
+        "version": version,
+        "dry_run": dry_run,
+        "candidates": sorted(branch_keys),
+        "updated": sorted(updated),
     }
 
 

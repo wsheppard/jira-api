@@ -106,6 +106,8 @@ function App() {
   const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
   const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
   const [stagingNextVersion, setStagingNextVersion] = useState('');
+  const [backfillInProgress, setBackfillInProgress] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState('');
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -196,6 +198,27 @@ const [nextPollIn, setNextPollIn] = useState(30);
       }
       const suffix = detail ? ` - ${detail}` : '';
       throw new Error(`Request failed: ${response.status} ${response.statusText}${suffix}`);
+    }
+    return response.json();
+  }, [summarizeErrorDetail]);
+
+  const postJson = useCallback(async (endpoint) => {
+    let response;
+    try {
+      response = await fetch(`${API_BASE_URL}/${endpoint}`, { method: 'POST' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected error while posting data.';
+      throw new Error(`Failed to post ${endpoint}: ${message}`);
+    }
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const body = await response.json();
+        detail = summarizeErrorDetail(body?.detail ?? body);
+      } catch (jsonError) {
+        detail = '';
+      }
+      throw new Error(`Request failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
     }
     return response.json();
   }, [summarizeErrorDetail]);
@@ -416,6 +439,84 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const isReadyForRelease = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
 
+  const buildReleaseReconciliation = () => {
+    const resolved = stagingResolvedVersion;
+    const releaseMap = new Map();
+    const upsertRelease = (ticket) => {
+      if (!ticket?.ticket) return;
+      const fixVersions = Array.isArray(ticket.fixVersions) ? ticket.fixVersions : [];
+      const inRelease = resolved ? fixVersions.includes(resolved) : false;
+      releaseMap.set(ticket.ticket, {
+        key: ticket.ticket,
+        title: ticket.title || '',
+        status: ticket.statusName || '',
+        link: ticket.link || '',
+        labels: Array.isArray(ticket.labels) ? ticket.labels : [],
+        inRelease,
+      });
+    };
+    if (stagingReleaseParent) {
+      upsertRelease(stagingReleaseParent);
+    }
+    stagingTickets.forEach(upsertRelease);
+
+    const branchMap = new Map();
+    githubCommits.forEach((commit) => {
+      const jiraItems = Array.isArray(commit?.jira) ? commit.jira : [];
+      jiraItems.forEach((jiraItem) => {
+        if (!jiraItem?.key) return;
+        if (!branchMap.has(jiraItem.key)) {
+          branchMap.set(jiraItem.key, {
+            key: jiraItem.key,
+            title: jiraItem.summary || '',
+            status: jiraItem.status || '',
+            link: jiraItem.link || '',
+            labels: Array.isArray(jiraItem.labels) ? jiraItem.labels : [],
+            fixVersions: Array.isArray(jiraItem.fixVersions) ? jiraItem.fixVersions : [],
+          });
+        }
+      });
+    });
+
+    const allKeys = new Set([...releaseMap.keys(), ...branchMap.keys()]);
+    return Array.from(allKeys).map((key) => {
+      const releaseData = releaseMap.get(key);
+      const branchData = branchMap.get(key);
+      const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
+      const branchFixVersions = branchData?.fixVersions || [];
+      const inBranch = Boolean(branchData);
+      const inRelease = Boolean(releaseData?.inRelease) || (resolved ? branchFixVersions.includes(resolved) : false);
+      return {
+        key,
+        title: releaseData?.title || branchData?.title || '',
+        status: releaseData?.status || branchData?.status || '',
+        link: releaseData?.link || branchData?.link || '',
+        labels,
+        inBranch,
+        inRelease,
+      };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+  };
+
+  const handleBackfillFixVersion = useCallback(async () => {
+    if (!stagingResolvedVersion) {
+      return;
+    }
+    setBackfillInProgress(true);
+    setBackfillMessage('');
+    try {
+      const payload = await postJson(`staging-backfill-fix-version?project=AP&version=${encodeURIComponent(stagingResolvedVersion)}`);
+      const updatedCount = Array.isArray(payload?.updated) ? payload.updated.length : 0;
+      setBackfillMessage(updatedCount > 0 ? `Backfilled Fix Version on ${updatedCount} ticket(s).` : 'No missing Fix Version tickets found.');
+      fetchViewData(activeView);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Backfill failed.';
+      setBackfillMessage(`Backfill failed: ${message}`);
+    } finally {
+      setBackfillInProgress(false);
+    }
+  }, [activeView, fetchViewData, postJson, stagingResolvedVersion]);
+
   return (
     <div className="container-fluid p-4">
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -529,7 +630,16 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   {stagingResolvedVersion && (
                     <span className="badge text-bg-light border">Resolved: {stagingResolvedVersion}</span>
                   )}
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={handleBackfillFixVersion}
+                    disabled={backfillInProgress || !stagingResolvedVersion}
+                  >
+                    {backfillInProgress ? 'Backfilling...' : 'Backfill Missing Fix Version'}
+                  </button>
                 </div>
+                {backfillMessage && <div className="small text-muted mb-2">{backfillMessage}</div>}
                 {stagingReleaseParent ? (
                   <div className={`card ${isReadyForRelease(stagingReleaseParent.statusName) ? 'staging-status-ready' : 'staging-status-not-ready'}`}>
                     <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
@@ -551,6 +661,32 @@ const [nextPollIn, setNextPollIn] = useState(30);
                 ) : (
                   <div className="text-muted small">No release-train parent ticket found for this version.</div>
                 )}
+              </div>
+              <div className="mb-3">
+                <div className="fw-semibold mb-2">Release Reconciliation</div>
+                <div className="d-flex flex-column gap-2">
+                  {buildReleaseReconciliation().map((item) => (
+                    <div key={item.key} className="border rounded p-2">
+                      <div className="d-flex flex-wrap align-items-center gap-2">
+                        {item.link ? (
+                          <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                            {item.key}
+                          </a>
+                        ) : (
+                          <span className="fw-semibold">{item.key}</span>
+                        )}
+                        <span className="text-muted">{item.title}</span>
+                        {item.status && <span className="badge text-bg-secondary">{item.status}</span>}
+                        {item.inBranch && item.inRelease && <span className="badge text-bg-success">In branch + release</span>}
+                        {!item.inBranch && item.inRelease && <span className="badge text-bg-warning">Release only</span>}
+                        {item.inBranch && !item.inRelease && <span className="badge text-bg-danger">Branch only (missing Fix Version)</span>}
+                        {Array.isArray(item.labels) && item.labels.map((label) => (
+                          <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               {stagingTickets.length > 0 && (
                 <div className="mb-3">
