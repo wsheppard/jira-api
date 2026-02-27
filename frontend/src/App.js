@@ -661,7 +661,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <div className="card h-100 staging-card staging-status-warning">
                         <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                           <span className="fw-semibold">Commits Without Jira</span>
-                          <span className="badge text-bg-danger">No Jira</span>
+                          <span className="badge text-bg-warning">No Jira</span>
                           <span className="badge text-bg-light border">{noJiraGroup.commits.length} commits</span>
                         </div>
                         <div className="card-body">
