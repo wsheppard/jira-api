@@ -660,31 +660,37 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <div
                         className={`card h-100 staging-card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
                       >
-                      <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
-                        {item.link ? (
-                          <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                            {item.key}
-                          </a>
-                        ) : (
-                          <span className="fw-semibold">{item.key}</span>
-                        )}
-                        <span className="text-muted">{item.title}</span>
-                        {item.status && (
-                          <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
-                            {item.status}
-                          </span>
-                        )}
-                        {item.inBranch ? (
-                          <span className="badge text-bg-success">MERGED</span>
-                        ) : (
-                          <span className="badge text-bg-danger">Not MERGED</span>
-                        )}
-                        {item.inBranch && !item.inRelease && (
-                          <span className="badge text-bg-warning">Missing Fix Version</span>
-                        )}
-                        {Array.isArray(item.labels) && item.labels.map((label) => (
-                          <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
-                        ))}
+                      <div className="card-header staging-status-header">
+                        <div className="d-flex align-items-start justify-content-between gap-2">
+                          {item.link ? (
+                            <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                              {item.key}
+                            </a>
+                          ) : (
+                            <span className="fw-semibold">{item.key}</span>
+                          )}
+                          <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
+                            {item.status && (
+                              <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                                {item.status}
+                              </span>
+                            )}
+                            {item.inBranch ? (
+                              <span className="badge text-bg-success">MERGED</span>
+                            ) : (
+                              <span className="badge text-bg-danger">Not MERGED</span>
+                            )}
+                            {item.inBranch && !item.inRelease && (
+                              <span className="badge text-bg-warning">Missing Fix Version</span>
+                            )}
+                            {Array.isArray(item.labels) && item.labels.map((label) => (
+                              <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="text-muted mt-2">
+                          {item.title}
+                        </div>
                       </div>
                       <div className="card-body">
                         {!item.inBranch ? (
