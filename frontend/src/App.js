@@ -654,12 +654,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
                 {!stagingReleaseParent && <div className="text-muted small">No release ticket found for this version.</div>}
               </div>
               <div className="mb-3">
-                <div className="d-flex flex-column gap-2">
+                <div className="row g-3">
                   {buildReleaseReconciliation().map((item) => (
-                    <div
-                      key={item.key}
-                      className={`card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
-                    >
+                    <div key={item.key} className="col-12 col-xl-6">
+                      <div
+                        className={`card h-100 ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
+                      >
                       <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                         {item.link ? (
                           <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
@@ -763,6 +763,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             })}
                           </ul>
                         )}
+                      </div>
                       </div>
                     </div>
                   ))}
