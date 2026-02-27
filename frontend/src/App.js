@@ -497,7 +497,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         inRelease,
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
       };
-    }).sort((a, b) => {
+    }).filter((item) => !item.isReleaseParent).sort((a, b) => {
       if (a.isReleaseParent && !b.isReleaseParent) return -1;
       if (!a.isReleaseParent && b.isReleaseParent) return 1;
       return a.key.localeCompare(b.key);
