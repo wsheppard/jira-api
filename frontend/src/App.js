@@ -403,20 +403,21 @@ const [nextPollIn, setNextPollIn] = useState(30);
     groupList.forEach((group) => {
       group.commits = group.commits.filter((commit) => !nestedCommitShas.has(commit.sha));
     });
+    const nonEmptyGroups = groupList.filter((group) => group.commits.length > 0);
     const orderMap = groupOrderRef.current;
     let nextIndex = orderMap.size;
-    groupList.forEach((group) => {
+    nonEmptyGroups.forEach((group) => {
       if (!orderMap.has(group.key)) {
         orderMap.set(group.key, nextIndex);
         nextIndex += 1;
       }
     });
-    groupList.sort((a, b) => {
+    nonEmptyGroups.sort((a, b) => {
       if (a.key === noJiraKey) return 1;
       if (b.key === noJiraKey) return -1;
       return (orderMap.get(a.key) ?? 0) - (orderMap.get(b.key) ?? 0);
     });
-    return groupList;
+    return nonEmptyGroups;
   };
 
   const renderPrLinks = (prs) => {
@@ -687,8 +688,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
               ) : githubCommits.length === 0 && !isLoading ? (
                 <p className="text-muted fst-italic mb-0">No commits found for this branch comparison.</p>
               ) : (
-                <div className="row g-3">
-                  {buildCommitGroups().map((group) => (
+                <details className="mt-2">
+                  <summary className="fw-semibold mb-2">Commit Timeline ({githubCommits.length})</summary>
+                  <div className="row g-3 mt-1">
+                    {buildCommitGroups().map((group) => (
                   <div className="col-12 col-xl-6" key={group.key}>
                     <div
                       className={`card h-100 ${
@@ -811,8 +814,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       </ul>
                     </div>
                   </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                </details>
               )}
           </div>
         </div>
