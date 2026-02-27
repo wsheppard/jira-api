@@ -210,6 +210,10 @@
   min-width: 0;
 }
 
+.staging-card .card-header .text-muted {
+  font-weight: 600;
+}
+
 .staging-card {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
   border-top: 4px solid transparent;
