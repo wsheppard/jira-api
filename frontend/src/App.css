@@ -228,6 +228,11 @@
   border-top-color: #198754;
 }
 
+.staging-status-warning {
+  border-top-color: #f0ad4e;
+  animation: wiggle 5.5s ease-in-out infinite;
+}
+
 .staging-status-header {
   background-color: transparent;
   color: inherit;

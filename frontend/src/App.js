@@ -658,7 +658,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                 <div className="row g-3">
                   {noJiraGroup && noJiraGroup.commits.length > 0 && (
                     <div className="col-12 col-xl-6">
-                      <div className="card h-100 staging-card staging-status-not-ready">
+                      <div className="card h-100 staging-card staging-status-warning">
                         <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
                           <span className="fw-semibold">Commits Without Jira</span>
                           <span className="badge text-bg-danger">No Jira</span>
