@@ -527,6 +527,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const commitGroupByKey = new Map(
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
+  const noJiraGroup = commitGroups.find((group) => group.key === 'NO-JIRA') || null;
 
   return (
     <div className="container-fluid p-4">
@@ -655,6 +656,43 @@ const [nextPollIn, setNextPollIn] = useState(30);
               </div>
               <div className="mb-3">
                 <div className="row g-3">
+                  {noJiraGroup && noJiraGroup.commits.length > 0 && (
+                    <div className="col-12 col-xl-6">
+                      <div className="card h-100 staging-card staging-status-not-ready">
+                        <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
+                          <span className="fw-semibold">Commits Without Jira</span>
+                          <span className="badge text-bg-danger">No Jira</span>
+                          <span className="badge text-bg-light border">{noJiraGroup.commits.length} commits</span>
+                        </div>
+                        <div className="card-body">
+                          <ul className="list-group list-group-flush">
+                            {noJiraGroup.commits.map((commit) => (
+                              <li key={`no-jira-${commit.sha}`} className="list-group-item px-0">
+                                <div className="commit-hash-message">
+                                  <span className="commit-hash">
+                                    {commit.link ? (
+                                      <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                                        {commit.sha?.slice(0, 7) ?? 'unknown'}
+                                      </a>
+                                    ) : (
+                                      commit.sha?.slice(0, 7) ?? 'unknown'
+                                    )}
+                                  </span>
+                                  <span className="commit-message-text">{commit.message || 'No message'}</span>
+                                </div>
+                                <div className="text-muted small">
+                                  {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                                </div>
+                                {renderPrLinks(commit.prs) && (
+                                  <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {buildReleaseReconciliation().map((item) => (
                     <div key={item.key} className="col-12 col-xl-6">
                       <div
