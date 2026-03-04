@@ -93,13 +93,37 @@ function TicketsList({ tickets }) {
     return 'fa-solid fa-question-circle';
   };
 
+  const openTicket = (ticketLink) => {
+    if (!ticketLink) return;
+    window.open(ticketLink, '_blank', 'noopener,noreferrer');
+  };
+
+  const isInteractiveClick = (event) => {
+    const target = event.target;
+    return target instanceof Element && Boolean(target.closest('a, button, input, textarea, select, label'));
+  };
+
   return (
     <div className="tickets-grid mb-5">
       {tickets.map(ticket => {
         const baseUrl = extractBaseUrl(ticket.link);
         return (
           <div className="tickets-grid__item" key={ticket.ticket}>
-            <div className={`card h-100 shadow ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}>
+            <div
+              className={`card h-100 shadow ticket-card-link ${isOverdue(ticket.dueDate) || daysOld(ticket.updated) >= 5 ? 'stale' : ''} ${priorityClass(ticket.priority)}`}
+              role="link"
+              tabIndex={0}
+              onClick={(event) => {
+                if (isInteractiveClick(event)) return;
+                openTicket(ticket.link);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openTicket(ticket.link);
+                }
+              }}
+            >
               <div className={`card-header d-flex align-items-center justify-content-between ${isOverdue(ticket.dueDate) ? 'bg-danger text-white' : ''}`}>
                 <span className="ticket-key text-truncate">
                   <i className={`${getIssueTypeIcon(ticket.issuetype)} me-2`}></i>

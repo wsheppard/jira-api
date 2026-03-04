@@ -66,6 +66,15 @@
   flex: 1;
 }
 
+.ticket-card-link {
+  cursor: pointer;
+}
+
+.ticket-card-link:focus-visible {
+  outline: 2px solid #0d6efd;
+  outline-offset: 2px;
+}
+
 .tickets-grid__item .card-body {
   flex: 1;
   display: flex;
