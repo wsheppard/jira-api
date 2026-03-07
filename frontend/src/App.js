@@ -17,7 +17,7 @@ const VIEW_CONFIG = {
   codexImplemented: { label: 'Codex Implemented', endpoint: 'codex-implemented', type: 'tickets' },
   codexIntegrationCommits: {
     label: 'Staging View',
-    endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=master&head=codex/integration',
+    endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=latest-tag&head=codex/integration',
     type: 'githubCommits',
   },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
@@ -249,17 +249,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
         setStagingAvailableVersions(Array.isArray(stagingData?.available_versions) ? stagingData.available_versions : []);
         setStagingResolvedVersion(stagingData?.resolved_version || '');
         setStagingNextVersion(stagingData?.next_version || '');
-        const selectedVersion = stagingData?.resolved_version || '';
-        const nextVersion = stagingData?.next_version || '';
-        const shouldShowLiveCommits = Boolean(selectedVersion && nextVersion && selectedVersion === nextVersion);
-        if (shouldShowLiveCommits) {
-          const data = await fetchJson(config.endpoint);
-          setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
-          setGithubCompare(data ?? null);
-        } else {
-          setGithubCommits([]);
-          setGithubCompare(null);
-        }
+        const compareVersion = stagingData?.resolved_version || stagingVersion || 'next';
+        const endpointWithVersion = `${config.endpoint}&version=${encodeURIComponent(compareVersion)}`;
+        const data = await fetchJson(endpointWithVersion);
+        setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
+        setGithubCompare(data ?? null);
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -442,6 +436,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   const buildReleaseReconciliation = () => {
     const resolved = stagingResolvedVersion;
+    const compareFromRef = githubCompare?.from_ref || '';
+    const compareToRef = githubCompare?.to_ref || '';
     const releaseMap = new Map();
     const upsertRelease = (ticket) => {
       if (!ticket?.ticket) return;
@@ -487,6 +483,16 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const branchFixVersions = branchData?.fixVersions || [];
       const inBranch = Boolean(branchData);
       const inRelease = Boolean(releaseData?.inRelease) || (resolved ? branchFixVersions.includes(resolved) : false);
+      const isMerged = inBranch;
+      const isReleaseTaggedOnly = inRelease && !inBranch;
+      let mergedWhere = '';
+      let mergedWhereDetail = '';
+      if (inBranch) {
+        mergedWhere = compareToRef ? `Seen in ${compareToRef}` : 'Seen in selected compare head';
+        mergedWhereDetail = compareFromRef && compareToRef ? `${compareFromRef} -> ${compareToRef}` : '';
+      } else if (inRelease) {
+        mergedWhere = resolved ? `In Jira Fix Version ${resolved}` : 'In Jira release scope';
+      }
       return {
         key,
         title: releaseData?.title || branchData?.title || '',
@@ -495,6 +501,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
         labels,
         inBranch,
         inRelease,
+        isMerged,
+        isReleaseTaggedOnly,
+        mergedWhere,
+        mergedWhereDetail,
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
       };
     }).filter((item) => !item.isReleaseParent).sort((a, b) => {
@@ -601,19 +611,31 @@ const [nextPollIn, setNextPollIn] = useState(30);
                 <div>
                   <div className="fw-semibold d-flex align-items-center gap-2">
                     <span>palliativa/monorepo</span>
-                    {githubCompare?.latest_tag && (
-                      <span className="badge text-bg-secondary">Latest tag: {githubCompare.latest_tag}</span>
+                    {githubCompare?.from_ref && githubCompare?.to_ref && (
+                      <span className="badge text-bg-light border">
+                        Range: {githubCompare.from_ref} -&gt; {githubCompare.to_ref}
+                      </span>
+                    )}
+                    {githubCompare?.from_sha && githubCompare?.to_sha && (
+                      <span className="badge text-bg-secondary">
+                        {githubCompare.from_sha.slice(0, 7)}..{githubCompare.to_sha.slice(0, 7)}
+                      </span>
+                    )}
+                    {githubCompare?.version_tag_found === false && (
+                      <span className="badge text-bg-warning">
+                        {`Tag not found for ${githubCompare.requested_release_version || 'selected version'} (unreleased; showing ${githubCompare.from_ref || 'latest tag'} -> ${githubCompare.to_ref || 'target head'})`}
+                      </span>
                     )}
                   </div>
                 </div>
                 <div className="d-flex align-items-center gap-2">
                   <a
-                    href="https://github.com/palliativa/monorepo/pulls?q=is%3Aopen+is%3Apr+base%3Acodex%2Fintegration"
+                    href={githubCompare?.compare_url || 'https://github.com/palliativa/monorepo/compare'}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="btn btn-sm btn-outline-primary"
                   >
-                    Open PRs to codex/integration
+                    Open Compare on GitHub
                   </a>
                   {githubCompare && (
                     <span className="badge text-bg-primary">{githubCompare.total_commits ?? githubCommits.length} commits</span>
@@ -695,6 +717,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   )}
                   {buildReleaseReconciliation().map((item) => (
                     <div key={item.key} className="col-12 col-xl-6">
+                      {(() => {
+                        const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
+                        return (
                       <div
                         className={`card h-100 staging-card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
                       >
@@ -713,10 +738,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                 {item.status}
                               </span>
                             )}
-                            {item.inBranch ? (
+                            {item.isMerged ? (
                               <span className="badge text-bg-success">MERGED</span>
+                            ) : item.isReleaseTaggedOnly ? (
+                              <span className="badge text-bg-info">RELEASE TAGGED</span>
                             ) : (
                               <span className="badge text-bg-danger">Not MERGED</span>
+                            )}
+                            {item.isMerged && item.mergedWhere && (
+                              <span className="badge text-bg-light border">{item.mergedWhere}</span>
                             )}
                             {item.inBranch && !item.inRelease && (
                               <span className="badge text-bg-warning">Missing Fix Version</span>
@@ -729,13 +759,24 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <div className="text-muted mt-2">
                           {item.title}
                         </div>
+                        {item.isMerged && item.mergedWhereDetail && (
+                          <div className="text-muted small mt-1">
+                            Range: {item.mergedWhereDetail}
+                          </div>
+                        )}
                       </div>
                       <div className="card-body">
-                        {!item.inBranch ? (
-                          <div className="text-muted small">No commits / PRs yet.</div>
+                        {commitsForItem.length === 0 ? (
+                          <div className="text-muted small">
+                            {item.isReleaseTaggedOnly
+                              ? 'In Jira Fix Version, but no GitHub commits/PRs found in this selected compare range.'
+                              : item.isMerged
+                                ? 'Merged, but no commits/PRs in this selected compare range.'
+                              : 'No commits / PRs yet.'}
+                          </div>
                         ) : (
                           <ul className="list-group list-group-flush">
-                            {(commitGroupByKey.get(item.key)?.commits || []).map((commit) => {
+                            {commitsForItem.map((commit) => {
                               const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
                               return (
                                 <li key={`${item.key}-${commit.sha}`} className="list-group-item px-0">
@@ -813,6 +854,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         )}
                       </div>
                       </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>

@@ -23,6 +23,7 @@ existing environment variables.
 
 import asyncio
 import copy
+import json
 import logging
 import os
 import re
@@ -34,6 +35,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from pipeline_dashboard import PipelineDashboard
 
@@ -68,6 +70,8 @@ if not bb_token:
 github_token = os.getenv("GITHUB_TOKEN")
 if not github_token:
     raise RuntimeError("GITHUB_TOKEN environment variable must be set")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+openai_jql_model = os.getenv("OPENAI_JQL_MODEL", "gpt-4.1-mini")
 
 # Hard-code Jira instances
 configs: List[Dict[str, Any]] = [
@@ -90,6 +94,20 @@ _github_pr_detail_cache: Dict[Tuple[str, str, int], Tuple[float, Dict[str, str] 
 _github_pr_detail_cache_lock = asyncio.Lock()
 _github_pr_commits_cache: Dict[Tuple[str, str, int], Tuple[float, List[Dict[str, str]]]] = {}
 _github_pr_commits_cache_lock = asyncio.Lock()
+
+
+class TicketQuestionRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class TicketQuestionResponse(BaseModel):
+    question: str
+    interpretation: str
+    jql: str
+    total_matches: int
+    limited_to: int
+    tickets: List[Dict[str, Any]]
 
 
 def _adf_to_text(node: Any) -> str:
@@ -222,6 +240,53 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
         async with _jira_cache_lock:
             _jira_cache[cache_key] = (time.monotonic(), copy.deepcopy(flattened))
     return flattened
+
+
+async def _question_to_jql(question: str) -> Dict[str, str]:
+    if not openai_api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY environment variable must be set for ticket questions")
+
+    system_prompt = (
+        "You translate user questions about Jira tickets into JQL. "
+        "Return strict JSON with keys: interpretation, jql. "
+        "Rules: search tickets only; no markdown; no explanations outside JSON; "
+        "prefer broad matching with ORDER BY updated DESC; "
+        "if user asks whether a ticket exists, produce a query that finds likely matches."
+    )
+    user_prompt = (
+        "User question:\n"
+        f"{question.strip()}\n\n"
+        "Output JSON now."
+    )
+    payload = {
+        "model": openai_jql_model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {openai_api_key}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {resp.text}")
+
+    content = (((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=502, detail="LLM returned empty content")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {exc}") from exc
+
+    interpretation = str(parsed.get("interpretation") or "").strip()
+    jql = str(parsed.get("jql") or "").strip().rstrip(";")
+    if not jql:
+        raise HTTPException(status_code=502, detail="LLM did not return a JQL query")
+    return {"interpretation": interpretation, "jql": jql}
 
 
 async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -450,11 +515,12 @@ async def bitbucket_commits(workspace: str, repo: str, limit: int = 10):
 async def github_branch_commits(
     owner: str,
     repo: str,
-    base: str = "master",
-    head: str = "codex/integration",
+    base: str = "latest-tag",
+    head: str = "master",
+    version: str | None = None,
 ) -> Dict[str, Any]:
-    """Return commits on codex/integration that are not reachable from base."""
-    cache_key = (owner, repo, base, head)
+    """Return commits on `head` that are not reachable from `base`."""
+    cache_key = (owner, repo, base, head, version or "")
     if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
         now = time.monotonic()
         async with _github_compare_cache_lock:
@@ -510,8 +576,111 @@ async def github_branch_commits(
         "Authorization": f"Bearer {github_token}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
-    head_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head}"
+
+    async def fetch_repo_tags() -> List[Dict[str, str]]:
+        tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+        page = 1
+        tag_rows: List[Dict[str, str]] = []
+        async with httpx.AsyncClient() as client:
+            while True:
+                resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
+                if resp_t.status_code != 200:
+                    raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
+                values = resp_t.json()
+                if not values:
+                    break
+                for tag in values:
+                    tag_name = tag.get("name")
+                    tag_commit = (tag.get("commit") or {}).get("sha")
+                    if not tag_name or not tag_commit:
+                        continue
+                    tag_rows.append({"name": tag_name, "sha": tag_commit})
+                page += 1
+        return tag_rows
+
+    def normalize_version_tag(requested_version: str, available_tags: List[str]) -> str | None:
+        if requested_version in available_tags:
+            return requested_version
+        if requested_version.startswith("v"):
+            alt = requested_version[1:]
+            if alt in available_tags:
+                return alt
+        else:
+            alt = f"v{requested_version}"
+            if alt in available_tags:
+                return alt
+        return None
+
+    resolved_base = base
+    resolved_head = head
+    latest_repo_tag: str | None = None
+    requested_version = (version or "").strip()
+    requested_release_version = requested_version if requested_version and requested_version.lower() != "next" else ""
+    version_tag_found: bool | None = None
+    version_unreleased_fallback = False
+    resolved_release_tag = ""
+    tags_for_resolution: List[Dict[str, str]] = []
+    if base == "latest-tag" or (requested_version and requested_version.lower() != "next"):
+        tags_for_resolution = await fetch_repo_tags()
+        if not tags_for_resolution:
+            raise HTTPException(status_code=400, detail="No tags found in repository")
+        tag_names = [row["name"] for row in tags_for_resolution]
+        semver_tag_names = [name for name in tag_names if re.match(r"^v?\d+\.\d+\.\d+$", name)]
+        if requested_release_version:
+            resolved_release_tag = normalize_version_tag(requested_release_version, tag_names) or ""
+            if not resolved_release_tag:
+                ordered_semver_tags = sorted(set(semver_tag_names), key=_semver_key)
+                if not ordered_semver_tags:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No semver tags found in repository; cannot resolve unreleased version range",
+                    )
+                version_tag_found = False
+                version_unreleased_fallback = True
+                resolved_base = ordered_semver_tags[-1]
+                resolved_head = head
+                latest_repo_tag = ordered_semver_tags[-1]
+            elif resolved_release_tag not in semver_tag_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Requested version tag '{resolved_release_tag}' is not a semver tag (expected vX.Y.Z or X.Y.Z)",
+                )
+            else:
+                version_tag_found = True
+                resolved_head = resolved_release_tag
+                ordered_semver_tags = sorted(set(semver_tag_names), key=_semver_key)
+                version_idx = ordered_semver_tags.index(resolved_head)
+                if version_idx == 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No previous semver tag exists before '{resolved_head}'",
+                    )
+                resolved_base = ordered_semver_tags[version_idx - 1]
+                latest_repo_tag = ordered_semver_tags[-1]
+
+                master_compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{resolved_head}...master"
+                async with httpx.AsyncClient() as client:
+                    master_compare_resp = await client.get(master_compare_url, headers=headers)
+                if master_compare_resp.status_code != 200:
+                    raise HTTPException(status_code=master_compare_resp.status_code, detail=master_compare_resp.text)
+                master_compare = master_compare_resp.json() or {}
+                if int(master_compare.get("behind_by") or 0) > 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Version tag '{resolved_head}' is not on master ancestry (behind_by={master_compare.get('behind_by')})",
+                    )
+        elif base == "latest-tag":
+            ordered_semver_tags = sorted(set(semver_tag_names), key=_semver_key)
+            if not ordered_semver_tags:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No semver tags found in repository; cannot resolve base=latest-tag",
+                )
+            resolved_base = ordered_semver_tags[-1]
+            latest_repo_tag = resolved_base
+
+    compare_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{resolved_base}...{resolved_head}"
+    head_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{resolved_head}"
     async with httpx.AsyncClient() as client:
         compare_resp = await client.get(compare_url, headers=headers)
         head_resp = await client.get(head_url, headers=headers)
@@ -521,6 +690,7 @@ async def github_branch_commits(
         raise HTTPException(status_code=head_resp.status_code, detail=head_resp.text)
 
     data = compare_resp.json()
+    base_sha = (data.get("base_commit") or {}).get("sha")
     head_sha = head_resp.json().get("sha")
     commits_raw = data.get("commits", [])
     commit_shas = [commit.get("sha") for commit in commits_raw if commit.get("sha")]
@@ -564,24 +734,10 @@ async def github_branch_commits(
                     else:
                         _github_tags_cache.pop(tags_cache_key, None)
         if not tags_by_commit:
-            tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
-            page = 1
             fetched_map: Dict[str, List[str]] = {}
-            async with httpx.AsyncClient() as client:
-                while True:
-                    resp_t = await client.get(tags_url, headers=headers, params={"per_page": 100, "page": page})
-                    if resp_t.status_code != 200:
-                        raise HTTPException(status_code=resp_t.status_code, detail=resp_t.text)
-                    values = resp_t.json()
-                    if not values:
-                        break
-                    for tag in values:
-                        tag_name = tag.get("name")
-                        tag_commit = (tag.get("commit") or {}).get("sha")
-                        if not tag_name or not tag_commit:
-                            continue
-                        fetched_map.setdefault(tag_commit, []).append(tag_name)
-                    page += 1
+            tag_rows = tags_for_resolution if tags_for_resolution else await fetch_repo_tags()
+            for tag in tag_rows:
+                fetched_map.setdefault(tag["sha"], []).append(tag["name"])
             tags_by_commit = fetched_map
             if GITHUB_TAGS_CACHE_TTL_SECONDS > 0:
                 async with _github_tags_cache_lock:
@@ -700,8 +856,21 @@ async def github_branch_commits(
     payload = {
         "owner": owner,
         "repo": repo,
-        "base": base,
-        "head": head,
+        "base": resolved_base,
+        "head": resolved_head,
+        "requested_base": base,
+        "requested_head": head,
+        "requested_version": version or "",
+        "requested_release_version": requested_release_version,
+        "version_tag_found": version_tag_found,
+        "version_unreleased_fallback": version_unreleased_fallback,
+        "resolved_release_tag": resolved_release_tag,
+        "from_ref": resolved_base,
+        "to_ref": resolved_head,
+        "from_sha": base_sha,
+        "to_sha": head_sha,
+        "latest_repo_tag": latest_repo_tag,
+        "compare_url": f"https://github.com/{owner}/{repo}/compare/{resolved_base}...{resolved_head}",
         "ahead_by": data.get("ahead_by"),
         "behind_by": data.get("behind_by"),
         "latest_tag": latest_tag,
