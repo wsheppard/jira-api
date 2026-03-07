@@ -40,6 +40,49 @@ from pydantic import BaseModel, Field
 from pipeline_dashboard import PipelineDashboard
 
 JIRA_KEY_REGEX = re.compile(r"\b((?:AP|PD)-\d+)\b")
+GENERIC_JIRA_KEY_REGEX = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
+QUESTION_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "can",
+    "could",
+    "do",
+    "does",
+    "for",
+    "from",
+    "have",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "its",
+    "me",
+    "of",
+    "on",
+    "or",
+    "please",
+    "show",
+    "that",
+    "the",
+    "there",
+    "ticket",
+    "tickets",
+    "to",
+    "we",
+    "what",
+    "where",
+    "which",
+    "who",
+    "with",
+    "would",
+}
 
 # reduce noisy dependency logging; disable httpx chatter entirely
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +115,10 @@ if not github_token:
     raise RuntimeError("GITHUB_TOKEN environment variable must be set")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai_jql_model = os.getenv("OPENAI_JQL_MODEL", "gpt-4.1-mini")
+xai_api_key = os.getenv("XAI_API_KEY")
+xai_jql_model = os.getenv("XAI_JQL_MODEL", "grok-3-mini")
+if not openai_api_key and not xai_api_key:
+    raise RuntimeError("One of OPENAI_API_KEY or XAI_API_KEY environment variables must be set")
 
 # Hard-code Jira instances
 configs: List[Dict[str, Any]] = [
@@ -105,6 +152,8 @@ class TicketQuestionResponse(BaseModel):
     question: str
     interpretation: str
     jql: str
+    attempted_jql: List[str]
+    successful_jql: List[str]
     total_matches: int
     limited_to: int
     tickets: List[Dict[str, Any]]
@@ -214,6 +263,9 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                 issuetype = (issue_fields.get("issuetype") or {}).get("name")
 
                 latest_comment = _latest_comment(issue_fields)
+                description_text = _adf_to_text(issue_fields.get("description")).strip()
+                if len(description_text) > 600:
+                    description_text = description_text[:597] + "..."
                 status = issue_fields.get("status") or {}
                 status_category = (status.get("statusCategory") or {}).get("name")
 
@@ -234,6 +286,7 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
                         "statusName": status.get("name"),
                         "statusCategory": status_category,
                         "latestComment": latest_comment,
+                        "descriptionText": description_text,
                     }
                 )
     if JIRA_CACHE_TTL_SECONDS > 0:
@@ -242,35 +295,70 @@ async def _search_jira(jql: str, fields: List[str]) -> List[Dict[str, Any]]:
     return flattened
 
 
-async def _question_to_jql(question: str) -> Dict[str, str]:
-    if not openai_api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY environment variable must be set for ticket questions")
+def _extract_question_terms(question: str) -> List[str]:
+    raw_terms = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9._/-]*", question.lower())
+    terms: List[str] = []
+    seen: set[str] = set()
+    for term in raw_terms:
+        if len(term) < 3 or term in QUESTION_STOP_WORDS:
+            continue
+        if term not in seen:
+            seen.add(term)
+            terms.append(term)
+    return terms
 
+
+def _escape_jql_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _fallback_jql_candidates(question: str) -> List[str]:
+    normalized = " ".join(question.strip().split())
+    if not normalized:
+        return []
+
+    candidates: List[str] = []
+    keys = sorted(set(GENERIC_JIRA_KEY_REGEX.findall(normalized.upper())))
+    if keys:
+        key_list = ", ".join(keys)
+        candidates.append(f"key in ({key_list}) ORDER BY updated DESC")
+
+    terms = _extract_question_terms(normalized)
+    if terms:
+        top_terms = terms[:4]
+        clauses = [f'text ~ "{_escape_jql_value(term)}"' for term in top_terms]
+        candidates.append(f"({ ' OR '.join(clauses) }) ORDER BY updated DESC")
+
+    candidates.append(f'text ~ "{_escape_jql_value(normalized[:120])}" ORDER BY updated DESC')
+    return candidates
+
+
+def _provider_config() -> Tuple[str, str, str, str]:
+    provider = "openai" if openai_api_key else "xai"
+    provider_api_key = openai_api_key if openai_api_key else xai_api_key
+    model = openai_jql_model if provider == "openai" else xai_jql_model
+    api_base_url = "https://api.openai.com/v1" if provider == "openai" else "https://api.x.ai/v1"
+    return provider, provider_api_key or "", model, api_base_url
+
+
+async def _call_llm_json(system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+    _, provider_api_key, model, api_base_url = _provider_config()
     system_prompt = (
-        "You translate user questions about Jira tickets into JQL. "
-        "Return strict JSON with keys: interpretation, jql. "
-        "Rules: search tickets only; no markdown; no explanations outside JSON; "
-        "prefer broad matching with ORDER BY updated DESC; "
-        "if user asks whether a ticket exists, produce a query that finds likely matches."
+        system_prompt.strip()
     )
-    user_prompt = (
-        "User question:\n"
-        f"{question.strip()}\n\n"
-        "Output JSON now."
-    )
+
     payload = {
-        "model": openai_jql_model,
+        "model": model,
         "temperature": 0,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
-    headers = {"Authorization": f"Bearer {openai_api_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {provider_api_key}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        resp = await client.post(f"{api_base_url}/chat/completions", headers=headers, json=payload)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"LLM request failed: {resp.text}")
 
@@ -281,12 +369,232 @@ async def _question_to_jql(question: str) -> Dict[str, str]:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="LLM JSON response must be an object")
+    return parsed
+
+
+async def _question_to_jql_candidates(question: str) -> Dict[str, Any]:
+    system_prompt = (
+        "You are a Jira query planner. Convert a user ticket question into JQL candidates. "
+        "Return strict JSON with keys: interpretation, jql_candidates. "
+        "jql_candidates must be a JSON array of 1 to 3 Jira Cloud JQL strings. "
+        "No markdown, no prose outside JSON. "
+        "Prefer recall over precision if the user asks whether a ticket exists."
+    )
+    user_prompt = (
+        "User question:\n"
+        f"{question.strip()}\n\n"
+        "Use ORDER BY updated DESC unless a different order is explicitly requested."
+    )
+    parsed = await _call_llm_json(system_prompt, user_prompt)
 
     interpretation = str(parsed.get("interpretation") or "").strip()
-    jql = str(parsed.get("jql") or "").strip().rstrip(";")
-    if not jql:
-        raise HTTPException(status_code=502, detail="LLM did not return a JQL query")
-    return {"interpretation": interpretation, "jql": jql}
+    raw_candidates = parsed.get("jql_candidates")
+    if isinstance(raw_candidates, str):
+        candidates = [raw_candidates]
+    elif isinstance(raw_candidates, list):
+        candidates = [str(item) for item in raw_candidates if str(item).strip()]
+    else:
+        candidates = []
+
+    normalized_candidates: List[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = candidate.strip().rstrip(";")
+        if not normalized or normalized in seen:
+            continue
+        normalized_candidates.append(normalized)
+        seen.add(normalized)
+
+    return {"interpretation": interpretation, "jql_candidates": normalized_candidates[:3]}
+
+
+def _ticket_relevance_score(ticket: Dict[str, Any], question: str, terms: List[str], mentioned_keys: set[str]) -> int:
+    score = 0
+    ticket_key = str(ticket.get("ticket") or "").upper()
+    title = str(ticket.get("title") or "").lower()
+    status = str(ticket.get("statusName") or "").lower()
+    labels = [str(label).lower() for label in (ticket.get("labels") or [])]
+    question_lower = question.lower()
+
+    if ticket_key and ticket_key in mentioned_keys:
+        score += 100
+    if ticket_key and ticket_key.lower() in question_lower:
+        score += 60
+    for term in terms:
+        if term in title:
+            score += 12
+        if term in status:
+            score += 6
+        if any(term in label for label in labels):
+            score += 4
+    if ticket.get("statusCategory") == "In Progress":
+        score += 2
+    return score
+
+
+def _ticket_term_match_count(ticket: Dict[str, Any], terms: List[str]) -> int:
+    if not terms:
+        return 0
+    title = str(ticket.get("title") or "").lower()
+    status = str(ticket.get("statusName") or "").lower()
+    labels = [str(label).lower() for label in (ticket.get("labels") or [])]
+    latest_comment = str((ticket.get("latestComment") or {}).get("body") or "").lower()
+    matched: set[str] = set()
+    for term in terms:
+        if term in title or term in status or term in latest_comment or any(term in label for label in labels):
+            matched.add(term)
+    return len(matched)
+
+
+async def _llm_filter_and_rank_ticket_shortlist(
+    question: str, shortlist: List[Dict[str, Any]], limit: int
+) -> List[str]:
+    compact_tickets = []
+    for ticket in shortlist:
+        ticket_id = f"{ticket.get('instance')}::{ticket.get('ticket')}"
+        compact_tickets.append(
+            {
+                "id": ticket_id,
+                "ticket": ticket.get("ticket"),
+                "instance": ticket.get("instance"),
+                "title": ticket.get("title"),
+                "status": ticket.get("statusName"),
+                "labels": ticket.get("labels") or [],
+                "description": ticket.get("descriptionText") or "",
+                "latest_comment": (ticket.get("latestComment") or {}).get("body") or "",
+                "updated": ticket.get("updated"),
+            }
+        )
+
+    system_prompt = (
+        "You are ranking Jira tickets by relevance to a user question. "
+        "Return strict JSON with key ranked_ids (array of relevant ticket IDs in best-first order). "
+        "Include only genuinely relevant tickets. "
+        f"Return at most {limit} IDs. "
+        "Use only provided ticket data. No markdown. No extra keys."
+    )
+    user_prompt = (
+        "Question:\n"
+        f"{question}\n\n"
+        "Ticket shortlist JSON:\n"
+        f"{json.dumps(compact_tickets)}"
+    )
+    parsed = await _call_llm_json(system_prompt, user_prompt)
+    ranked_ids_raw = parsed.get("ranked_ids")
+    if not isinstance(ranked_ids_raw, list):
+        raise HTTPException(status_code=502, detail="LLM reranker did not return ranked_ids array")
+
+    seen: set[str] = set()
+    ranked_ids: List[str] = []
+    for item in ranked_ids_raw:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        ranked_ids.append(value)
+        seen.add(value)
+    return ranked_ids
+
+
+@app.get("/llm-status")
+async def llm_status() -> Dict[str, str]:
+    provider = "openai" if openai_api_key else "xai"
+    model = openai_jql_model if provider == "openai" else xai_jql_model
+    return {"provider": provider, "model": model}
+
+
+@app.post("/ticket-question", response_model=TicketQuestionResponse)
+async def ticket_question(payload: TicketQuestionRequest) -> TicketQuestionResponse:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    resolved = await _question_to_jql_candidates(question)
+    llm_candidates = list(resolved.get("jql_candidates") or [])
+    fallback_candidates = _fallback_jql_candidates(question)
+
+    attempted_jql: List[str] = []
+    seen_jql: set[str] = set()
+    for candidate in [*llm_candidates, *fallback_candidates]:
+        normalized = candidate.strip().rstrip(";")
+        if not normalized or normalized in seen_jql:
+            continue
+        attempted_jql.append(normalized)
+        seen_jql.add(normalized)
+    attempted_jql = attempted_jql[:6]
+
+    fields = [
+        "summary",
+        "description",
+        "comment",
+        "project",
+        "assignee",
+        "updated",
+        "duedate",
+        "key",
+        "status",
+        "priority",
+        "labels",
+        "issuetype",
+    ]
+    gathered: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    successful_jql: List[str] = []
+    for candidate in attempted_jql:
+        try:
+            matches = await _search_jira(candidate, fields)
+        except HTTPException as exc:
+            logger.warning("Ticket question candidate failed (%s): %s", candidate, exc.detail)
+            continue
+        successful_jql.append(candidate)
+        for ticket in matches:
+            dedupe_key = (str(ticket.get("instance") or ""), str(ticket.get("ticket") or ""))
+            if dedupe_key not in gathered:
+                gathered[dedupe_key] = ticket
+
+    terms = _extract_question_terms(question)
+    mentioned_keys = set(GENERIC_JIRA_KEY_REGEX.findall(question.upper()))
+    scored_tickets = []
+    for ticket in gathered.values():
+        score = _ticket_relevance_score(ticket, question, terms, mentioned_keys)
+        term_matches = _ticket_term_match_count(ticket, terms)
+        key_mentioned = bool(ticket.get("ticket") and str(ticket.get("ticket")).upper() in mentioned_keys)
+        scored_tickets.append((score, term_matches, key_mentioned, ticket.get("updated") or "", ticket))
+    scored_tickets.sort(key=lambda item: (item[0], item[1], item[3]), reverse=True)
+    tickets = [item[4] for item in scored_tickets]
+
+    # If the broad search fan-out is too large, keep results that match multiple key terms.
+    if len(tickets) > payload.limit * 2 and len(terms) >= 2:
+        min_required = 2
+        narrowed = [
+            item[4]
+            for item in scored_tickets
+            if item[2] or item[1] >= min_required
+        ]
+        if len(narrowed) >= max(5, payload.limit // 2):
+            tickets = narrowed
+    shortlist_size = min(max(payload.limit * 3, 20), 80)
+    shortlist = tickets[:shortlist_size]
+    ranked_ids = await _llm_filter_and_rank_ticket_shortlist(question, shortlist, payload.limit)
+    by_id = {f"{ticket.get('instance')}::{ticket.get('ticket')}": ticket for ticket in shortlist}
+    reranked = [by_id[ticket_id] for ticket_id in ranked_ids if ticket_id in by_id]
+    if not reranked:
+        # Fail hard would be too punishing here; fallback to strongest heuristic ordering.
+        reranked = shortlist[: payload.limit]
+
+    limited = reranked[: payload.limit]
+    primary_jql = successful_jql[0] if successful_jql else (attempted_jql[0] if attempted_jql else "")
+
+    return TicketQuestionResponse(
+        question=question,
+        interpretation=resolved["interpretation"],
+        jql=primary_jql,
+        attempted_jql=attempted_jql,
+        successful_jql=successful_jql,
+        total_matches=len(reranked),
+        limited_to=payload.limit,
+        tickets=limited,
+    )
 
 
 async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:

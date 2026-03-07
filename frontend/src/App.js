@@ -20,6 +20,7 @@ const VIEW_CONFIG = {
     endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=latest-tag&head=codex/integration',
     type: 'githubCommits',
   },
+  ticketQuestion: { label: 'Ask Tickets', endpoint: 'ticket-question', type: 'ticketQuestion' },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
 
@@ -33,6 +34,7 @@ const VIEW_ORDER = [
   'codexMoreInfo',
   'codexImplemented',
   'codexIntegrationCommits',
+  'ticketQuestion',
   'pipeline',
 ];
 const DEFAULT_VIEW = 'open';
@@ -110,6 +112,9 @@ function App() {
   const [backfillMessage, setBackfillMessage] = useState('');
   const [pipelineData, setPipelineData] = useState({});
   const [pipelineCategories, setPipelineCategories] = useState([]);
+  const [ticketQuestionInput, setTicketQuestionInput] = useState('');
+  const [ticketQuestionResult, setTicketQuestionResult] = useState(null);
+  const [ticketQuestionRunning, setTicketQuestionRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 const [nextPollIn, setNextPollIn] = useState(30);
@@ -117,7 +122,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const groupOrderRef = useRef(new Map());
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
-  const pollIntervalMs = activeConfig?.type === 'githubCommits' ? 300000 : 30000;
+  const pollIntervalMs = activeConfig?.type === 'githubCommits'
+    ? 300000
+    : activeConfig?.type === 'ticketQuestion'
+      ? 0
+      : 30000;
   const pollIntervalSeconds = Math.floor(pollIntervalMs / 1000);
 
   const markRequestStart = useCallback(() => {
@@ -202,10 +211,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return response.json();
   }, [summarizeErrorDetail]);
 
-  const postJson = useCallback(async (endpoint) => {
+  const postJson = useCallback(async (endpoint, body = null) => {
+    const options = { method: 'POST' };
+    if (body != null) {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(body);
+    }
     let response;
     try {
-      response = await fetch(`${API_BASE_URL}/${endpoint}`, { method: 'POST' });
+      response = await fetch(`${API_BASE_URL}/${endpoint}`, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unexpected error while posting data.';
       throw new Error(`Failed to post ${endpoint}: ${message}`);
@@ -229,6 +243,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
       return;
     }
     setNextPollIn(pollIntervalSeconds);
+    if (config.type === 'ticketQuestion') {
+      return;
+    }
 
     markRequestStart();
     setErrorMessage('');
@@ -337,6 +354,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
   }, [activeConfig]);
 
   useEffect(() => {
+    if (pollIntervalMs <= 0) {
+      return undefined;
+    }
     const interval = setInterval(() => {
       fetchViewData(activeView);
     }, pollIntervalMs);
@@ -532,6 +552,25 @@ const [nextPollIn, setNextPollIn] = useState(30);
       setBackfillInProgress(false);
     }
   }, [activeView, fetchViewData, postJson, stagingResolvedVersion]);
+
+  const handleAskTicketQuestion = useCallback(async () => {
+    const question = ticketQuestionInput.trim();
+    if (!question) {
+      setErrorMessage('Enter a question first.');
+      return;
+    }
+    setTicketQuestionRunning(true);
+    setErrorMessage('');
+    try {
+      const data = await postJson('ticket-question', { question, limit: 40 });
+      setTicketQuestionResult(data ?? null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ticket question failed.';
+      setErrorMessage(message);
+    } finally {
+      setTicketQuestionRunning(false);
+    }
+  }, [postJson, ticketQuestionInput]);
 
   const commitGroups = buildCommitGroups();
   const commitGroupByKey = new Map(
@@ -860,6 +899,49 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   ))}
                 </div>
               </div>
+          </div>
+        </div>
+      ) : activeConfig?.type === 'ticketQuestion' ? (
+        <div className="card shadow-sm">
+          <div className="card-body">
+            <div className="d-flex flex-column gap-2 mb-3">
+              <label htmlFor="ticketQuestionInput" className="fw-semibold mb-0">Ask about tickets</label>
+              <textarea
+                id="ticketQuestionInput"
+                className="form-control"
+                rows={3}
+                value={ticketQuestionInput}
+                onChange={(event) => setTicketQuestionInput(event.target.value)}
+                placeholder="e.g. do we have a ticket for improving invoice export timeouts?"
+              />
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={ticketQuestionRunning}
+                  onClick={handleAskTicketQuestion}
+                >
+                  {ticketQuestionRunning ? 'Searching...' : 'Ask'}
+                </button>
+              </div>
+            </div>
+
+            {ticketQuestionResult && (
+              <div className="d-flex flex-column gap-2">
+                {ticketQuestionResult.interpretation && (
+                  <div className="small text-muted">
+                    <strong>Interpretation:</strong> {ticketQuestionResult.interpretation}
+                  </div>
+                )}
+                <div className="small">
+                  <strong>JQL:</strong> <code>{ticketQuestionResult.jql}</code>
+                </div>
+                <div className="small text-muted">
+                  {ticketQuestionResult.total_matches} match(es), showing up to {ticketQuestionResult.limited_to}
+                </div>
+                <TicketsList tickets={Array.isArray(ticketQuestionResult.tickets) ? ticketQuestionResult.tickets : []} />
+              </div>
+            )}
           </div>
         </div>
       ) : (
