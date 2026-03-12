@@ -1,7 +1,7 @@
 {
   "short_name": "JJR Jira",
   "name": "JJR Jira Dashboard",
-  "description": "Dashboard bridge for Jira and Bitbucket insights.",
+  "description": "Dashboard bridge for Jira and GitHub insights.",
   "icons": [
     {
       "src": "favicon.ico",

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import TicketsList from './TicketsList';
-import PipelineDashboard from './PipelineDashboard';
 import './App.css';
 
 const API_BASE_URL = 'https://jira.api.jjrsoftware.co.uk';
@@ -27,7 +26,6 @@ const VIEW_CONFIG = {
     type: 'githubPrQueue',
   },
   ticketQuestion: { label: 'Ask Tickets', endpoint: 'ticket-question', type: 'ticketQuestion' },
-  pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
 
 const VIEW_ORDER = [
@@ -42,7 +40,6 @@ const VIEW_ORDER = [
   'codexIntegrationCommits',
   'codexIntegrationPrQueue',
   'ticketQuestion',
-  'pipeline',
 ];
 const DEFAULT_VIEW = 'open';
 
@@ -123,8 +120,6 @@ function App() {
   const [mergeMessageByTicket, setMergeMessageByTicket] = useState({});
   const [backfillInProgress, setBackfillInProgress] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState('');
-  const [pipelineData, setPipelineData] = useState({});
-  const [pipelineCategories, setPipelineCategories] = useState([]);
   const [ticketQuestionInput, setTicketQuestionInput] = useState('');
   const [ticketQuestionResult, setTicketQuestionResult] = useState(null);
   const [ticketQuestionRunning, setTicketQuestionRunning] = useState(false);
@@ -268,16 +263,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     markRequestStart();
     setErrorMessage('');
     try {
-      if (config.type === 'pipeline') {
-        const data = await fetchJson(config.endpoint);
-        setPipelineData(data);
-        const repos = Object.keys(data);
-        if (repos.length > 0) {
-          setPipelineCategories(Object.keys(data[repos[0]]));
-        } else {
-          setPipelineCategories([]);
-        }
-      } else if (config.type === 'githubPrQueue') {
+      if (config.type === 'githubPrQueue') {
         const data = await fetchJson(config.endpoint);
         setGithubPrQueue(Array.isArray(data?.prs) ? data.prs : []);
       } else if (config.type === 'githubCommits') {
@@ -890,13 +876,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         </div>
       </div>
 
-      {activeConfig?.type === 'pipeline' ? (
-        pipelineCategories.length === 0 && !isLoading ? (
-          <p className="text-muted fst-italic">No pipeline data available.</p>
-        ) : (
-          <PipelineDashboard data={pipelineData} categories={pipelineCategories} />
-        )
-      ) : activeConfig?.type === 'githubCommits' ? (
+      {activeConfig?.type === 'githubCommits' ? (
         <div className="card shadow-sm">
           <div className="card-body">
               <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
