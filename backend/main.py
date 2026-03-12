@@ -29,7 +29,7 @@ import os
 import re
 import time
 from datetime import date
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Literal, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -157,6 +157,43 @@ class TicketQuestionResponse(BaseModel):
     total_matches: int
     limited_to: int
     tickets: List[Dict[str, Any]]
+
+
+class ImplementationTicketDraft(BaseModel):
+    summary: str = Field(min_length=3, max_length=300)
+    description: str = Field(default="", max_length=20000)
+    issue_type: str = Field(default="Task", min_length=1, max_length=100)
+    labels: List[str] = Field(default_factory=list)
+
+
+class CreateLinkedSoftwareTicketsRequest(BaseModel):
+    design_ticket_key: str = Field(min_length=3, max_length=40)
+    target_project: str = Field(default="AP", min_length=2, max_length=20)
+    implementations: List[ImplementationTicketDraft] = Field(min_length=1, max_length=20)
+    link_type: str = Field(default="Relates", min_length=1, max_length=100)
+    dry_run: bool = True
+
+
+class CreateLinkedSoftwareTicketsResponse(BaseModel):
+    design_ticket_key: str
+    design_ticket_link: str
+    target_project: str
+    dry_run: bool
+    created_count: int
+    tickets: List[Dict[str, Any]]
+
+
+class TicketAssistantRequest(BaseModel):
+    text: str = Field(min_length=3, max_length=4000)
+    limit: int = Field(default=20, ge=1, le=100)
+    dry_run: bool = True
+
+
+class TicketAssistantResponse(BaseModel):
+    intent: str
+    interpretation: str
+    message: str = ""
+    data: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _adf_to_text(node: Any) -> str:
@@ -410,6 +447,27 @@ async def _question_to_jql_candidates(question: str) -> Dict[str, Any]:
     return {"interpretation": interpretation, "jql_candidates": normalized_candidates[:3]}
 
 
+async def _infer_assistant_action(text: str) -> Dict[str, Any]:
+    system_prompt = (
+        "You are a Jira assistant router. Infer user intent from free text. "
+        "Return strict JSON with keys: intent, interpretation, search, create. "
+        "intent must be one of: search_tickets, create_linked_software_tickets. "
+        "search must include question. "
+        "create must include design_ticket_key, target_project, link_type, implementations. "
+        "implementations is an array of objects with: summary, description, issue_type, labels. "
+        "No markdown and no extra keys."
+    )
+    user_prompt = f"User input:\n{text.strip()}"
+    parsed = await _call_llm_json(system_prompt, user_prompt)
+    intent = str(parsed.get("intent") or "").strip()
+    interpretation = str(parsed.get("interpretation") or "").strip()
+    search = parsed.get("search") if isinstance(parsed.get("search"), dict) else {}
+    create = parsed.get("create") if isinstance(parsed.get("create"), dict) else {}
+    if intent not in {"search_tickets", "create_linked_software_tickets"}:
+        intent = "search_tickets"
+    return {"intent": intent, "interpretation": interpretation, "search": search, "create": create}
+
+
 def _ticket_relevance_score(ticket: Dict[str, Any], question: str, terms: List[str], mentioned_keys: set[str]) -> int:
     score = 0
     ticket_key = str(ticket.get("ticket") or "").upper()
@@ -446,6 +504,51 @@ def _ticket_term_match_count(ticket: Dict[str, Any], terms: List[str]) -> int:
         if term in title or term in status or term in latest_comment or any(term in label for label in labels):
             matched.add(term)
     return len(matched)
+
+
+async def _find_issue_and_config(
+    key: str, fields: List[str]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    headers = {"Content-Type": "application/json"}
+    issue_key = key.strip().upper()
+    async with httpx.AsyncClient() as client:
+        for cfg in configs:
+            issue_url = f"{cfg['base_url'].rstrip('/')}/rest/api/3/issue/{issue_key}"
+            resp = await client.get(
+                issue_url,
+                auth=(cfg["email"], cfg["token"]),
+                headers=headers,
+                params={"fields": ",".join(fields)},
+            )
+            if resp.status_code == 200:
+                return cfg, resp.json()
+            if resp.status_code == 404:
+                continue
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    raise HTTPException(status_code=404, detail=f"Ticket '{issue_key}' not found in configured Jira instances")
+
+
+def _dedupe_labels(labels: List[str]) -> List[str]:
+    output: List[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        value = (label or "").strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        output.append(value)
+    return output
+
+
+def _model_to_dict(model: Any) -> Dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()  # type: ignore[attr-defined]
+    if hasattr(model, "dict"):
+        return model.dict()  # type: ignore[attr-defined]
+    raise RuntimeError("Unsupported model type for serialization")
 
 
 async def _llm_filter_and_rank_ticket_shortlist(
@@ -597,6 +700,170 @@ async def ticket_question(payload: TicketQuestionRequest) -> TicketQuestionRespo
     )
 
 
+@app.post("/ticket-assistant", response_model=TicketAssistantResponse)
+async def ticket_assistant(payload: TicketAssistantRequest) -> TicketAssistantResponse:
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text cannot be empty")
+
+    routed = await _infer_assistant_action(text)
+    intent = routed["intent"]
+    interpretation = routed.get("interpretation") or ""
+
+    if intent == "create_linked_software_tickets":
+        create_block = routed.get("create") or {}
+        implementations_raw = create_block.get("implementations")
+        implementations: List[ImplementationTicketDraft] = []
+        if isinstance(implementations_raw, list):
+            for item in implementations_raw:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    implementations.append(ImplementationTicketDraft(**item))
+                except Exception:
+                    continue
+
+        if not implementations:
+            return TicketAssistantResponse(
+                intent=intent,
+                interpretation=interpretation,
+                message=(
+                    "I inferred create-linked-ticket intent but could not extract implementation drafts. "
+                    "Please include one or more implementation bullet points."
+                ),
+                data={},
+            )
+
+        create_request = CreateLinkedSoftwareTicketsRequest(
+            design_ticket_key=str(create_block.get("design_ticket_key") or ""),
+            target_project=str(create_block.get("target_project") or "AP"),
+            link_type=str(create_block.get("link_type") or "Relates"),
+            implementations=implementations,
+            dry_run=payload.dry_run,
+        )
+        create_result = await create_linked_software_tickets(create_request)
+        return TicketAssistantResponse(
+            intent=intent,
+            interpretation=interpretation,
+            message="Created linked software tickets" if not payload.dry_run else "Dry run plan generated",
+            data=_model_to_dict(create_result),
+        )
+
+    search_question = str((routed.get("search") or {}).get("question") or text).strip() or text
+    search_result = await ticket_question(TicketQuestionRequest(question=search_question, limit=payload.limit))
+    return TicketAssistantResponse(
+        intent="search_tickets",
+        interpretation=interpretation or search_result.interpretation,
+        message="Search completed",
+        data=_model_to_dict(search_result),
+    )
+
+
+@app.post("/ticket-actions/create-linked-software-tickets", response_model=CreateLinkedSoftwareTicketsResponse)
+async def create_linked_software_tickets(payload: CreateLinkedSoftwareTicketsRequest) -> CreateLinkedSoftwareTicketsResponse:
+    design_key = payload.design_ticket_key.strip().upper()
+    target_project = payload.target_project.strip().upper()
+    if not re.match(r"^[A-Z][A-Z0-9]+-\d+$", design_key):
+        raise HTTPException(status_code=400, detail="design_ticket_key must look like ABC-123")
+    if not re.match(r"^[A-Z][A-Z0-9]+$", target_project):
+        raise HTTPException(status_code=400, detail="target_project must be a Jira project key")
+
+    source_fields = ["summary", "description", "labels", "project"]
+    cfg, source_issue = await _find_issue_and_config(design_key, source_fields)
+    source_summary = str((source_issue.get("fields") or {}).get("summary") or "").strip()
+    source_description = _adf_to_text((source_issue.get("fields") or {}).get("description")).strip()
+    source_labels = (source_issue.get("fields") or {}).get("labels") or []
+    base_url = cfg["base_url"].rstrip("/")
+
+    created_tickets: List[Dict[str, Any]] = []
+    headers = {"Content-Type": "application/json"}
+    async with httpx.AsyncClient() as client:
+        for index, draft in enumerate(payload.implementations, start=1):
+            description = draft.description.strip()
+            if not description:
+                description = (
+                    f"Implementation ticket derived from design ticket {design_key}: {source_summary}\n\n"
+                    f"Design ticket: {base_url}/browse/{design_key}\n\n"
+                    f"{source_description}"
+                ).strip()
+            labels = _dedupe_labels(
+                [
+                    *(draft.labels or []),
+                    *source_labels,
+                    "implementation-ticket",
+                    f"design-source-{design_key.lower()}",
+                ]
+            )
+            issue_fields: Dict[str, Any] = {
+                "project": {"key": target_project},
+                "summary": draft.summary.strip(),
+                "description": description,
+                "issuetype": {"name": draft.issue_type.strip()},
+                "labels": labels,
+            }
+
+            if payload.dry_run:
+                created_tickets.append(
+                    {
+                        "index": index,
+                        "summary": draft.summary.strip(),
+                        "would_create_fields": issue_fields,
+                        "would_link_to": design_key,
+                        "link_type": payload.link_type,
+                    }
+                )
+                continue
+
+            create_url = f"{base_url}/rest/api/3/issue"
+            create_resp = await client.post(
+                create_url,
+                auth=(cfg["email"], cfg["token"]),
+                headers=headers,
+                json={"fields": issue_fields},
+            )
+            if create_resp.status_code not in {200, 201}:
+                raise HTTPException(status_code=create_resp.status_code, detail=create_resp.text)
+            created_issue = create_resp.json()
+            created_key = str(created_issue.get("key") or "").strip().upper()
+            if not created_key:
+                raise HTTPException(status_code=502, detail="Jira did not return a ticket key for created issue")
+
+            link_url = f"{base_url}/rest/api/3/issueLink"
+            link_payload = {
+                "type": {"name": payload.link_type},
+                "inwardIssue": {"key": design_key},
+                "outwardIssue": {"key": created_key},
+            }
+            link_resp = await client.post(
+                link_url,
+                auth=(cfg["email"], cfg["token"]),
+                headers=headers,
+                json=link_payload,
+            )
+            if link_resp.status_code not in {200, 201}:
+                raise HTTPException(status_code=link_resp.status_code, detail=link_resp.text)
+
+            created_tickets.append(
+                {
+                    "index": index,
+                    "key": created_key,
+                    "summary": draft.summary.strip(),
+                    "link": f"{base_url}/browse/{created_key}",
+                    "linked_to": design_key,
+                    "link_type": payload.link_type,
+                }
+            )
+
+    return CreateLinkedSoftwareTicketsResponse(
+        design_ticket_key=design_key,
+        design_ticket_link=f"{base_url}/browse/{design_key}",
+        target_project=target_project,
+        dry_run=payload.dry_run,
+        created_count=0 if payload.dry_run else len(created_tickets),
+        tickets=created_tickets,
+    )
+
+
 async def fetch_jira_statuses(keys: List[str]) -> Dict[str, Dict[str, Any]]:
     """Fetch Jira status and link for AP/PD issues in the palliativa instance."""
     if not keys:
@@ -676,6 +943,214 @@ async def fetch_pr_commits(
             }
         )
     return commits
+
+
+async def find_open_prs_for_ticket(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    owner: str,
+    repo: str,
+    base: str,
+    ticket_key: str,
+) -> List[Dict[str, Any]]:
+    ticket_upper = ticket_key.strip().upper()
+    if not ticket_upper:
+        return []
+    ticket_pattern = re.compile(rf"\b{re.escape(ticket_upper)}\b", re.IGNORECASE)
+    pulls_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+    page = 1
+    matching: List[Dict[str, Any]] = []
+    while True:
+        resp = await client.get(
+            pulls_url,
+            headers=headers,
+            params={"state": "open", "base": base, "per_page": 100, "page": page},
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        rows = resp.json() or []
+        if not rows:
+            break
+        for pr in rows:
+            haystack = " ".join(
+                [
+                    (pr.get("title") or ""),
+                    (pr.get("body") or ""),
+                    ((pr.get("head") or {}).get("ref") or ""),
+                    ((pr.get("base") or {}).get("ref") or ""),
+                ]
+            )
+            if ticket_pattern.search(haystack):
+                matching.append(pr)
+        page += 1
+    return matching
+
+
+@app.post("/github-merge-ticket-pr")
+async def github_merge_ticket_pr(
+    ticket: str,
+    owner: str = "palliativa",
+    repo: str = "monorepo",
+    base: str = "codex/integration",
+    method: Literal["merge", "squash", "rebase"] = "merge",
+) -> Dict[str, Any]:
+    ticket_key = ticket.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9]+-\d+", ticket_key):
+        raise HTTPException(status_code=400, detail=f"Invalid ticket key '{ticket}'")
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    async with httpx.AsyncClient() as client:
+        matching = await find_open_prs_for_ticket(
+            client=client,
+            headers=headers,
+            owner=owner,
+            repo=repo,
+            base=base,
+            ticket_key=ticket_key,
+        )
+        if not matching:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No open PR found for ticket '{ticket_key}' targeting '{base}' in {owner}/{repo}",
+            )
+        if len(matching) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"Multiple open PRs found for ticket '{ticket_key}' targeting '{base}'.",
+                    "prs": [
+                        {
+                            "number": row.get("number"),
+                            "title": row.get("title") or "",
+                            "url": row.get("html_url") or "",
+                            "head": ((row.get("head") or {}).get("ref") or ""),
+                        }
+                        for row in matching
+                    ],
+                },
+            )
+
+        pr = matching[0]
+        pr_number = pr.get("number")
+        if not isinstance(pr_number, int):
+            raise HTTPException(status_code=500, detail="Matched PR did not include a valid PR number")
+
+        merge_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
+        merge_resp = await client.put(merge_url, headers=headers, json={"merge_method": method})
+        if merge_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=merge_resp.status_code, detail=merge_resp.text)
+        merge_payload = merge_resp.json() or {}
+
+    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
+        async with _github_compare_cache_lock:
+            cache_keys = [key for key in _github_compare_cache.keys() if key[0] == owner and key[1] == repo]
+            for cache_key in cache_keys:
+                _github_compare_cache.pop(cache_key, None)
+
+    return {
+        "ticket": ticket_key,
+        "owner": owner,
+        "repo": repo,
+        "base": base,
+        "method": method,
+        "pr": {
+            "number": pr_number,
+            "title": pr.get("title") or "",
+            "url": pr.get("html_url") or "",
+            "head": ((pr.get("head") or {}).get("ref") or ""),
+        },
+        "merged": bool(merge_payload.get("merged")),
+        "message": merge_payload.get("message") or "",
+        "sha": merge_payload.get("sha") or "",
+    }
+
+
+@app.get("/github-pr-queue")
+async def github_pr_queue(
+    owner: str = "palliativa",
+    repo: str = "monorepo",
+    base: str = "codex/integration",
+) -> Dict[str, Any]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    pulls_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+    page = 1
+    open_prs: List[Dict[str, Any]] = []
+    async with httpx.AsyncClient() as client:
+        while True:
+            resp = await client.get(
+                pulls_url,
+                headers=headers,
+                params={"state": "open", "base": base, "sort": "updated", "direction": "desc", "per_page": 100, "page": page},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            rows = resp.json() or []
+            if not rows:
+                break
+            open_prs.extend(rows)
+            page += 1
+
+    def extract_ticket_keys_from_text(*parts: str) -> List[str]:
+        seen: set[str] = set()
+        ordered: List[str] = []
+        combined = " ".join(parts)
+        for key in GENERIC_JIRA_KEY_REGEX.findall(combined):
+            normalized = key.upper()
+            if normalized not in seen:
+                seen.add(normalized)
+                ordered.append(normalized)
+        return ordered
+
+    all_ticket_keys: set[str] = set()
+    for pr in open_prs:
+        keys = extract_ticket_keys_from_text(
+            pr.get("title") or "",
+            pr.get("body") or "",
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        all_ticket_keys.update(keys)
+
+    jira_lookup = await fetch_jira_statuses(sorted(all_ticket_keys))
+    queue_rows: List[Dict[str, Any]] = []
+    for pr in open_prs:
+        ticket_keys = extract_ticket_keys_from_text(
+            pr.get("title") or "",
+            pr.get("body") or "",
+            ((pr.get("head") or {}).get("ref") or ""),
+        )
+        queue_rows.append(
+            {
+                "number": pr.get("number"),
+                "title": pr.get("title") or "",
+                "url": pr.get("html_url") or "",
+                "state": pr.get("state") or "",
+                "draft": bool(pr.get("draft")),
+                "created_at": pr.get("created_at") or "",
+                "updated_at": pr.get("updated_at") or "",
+                "mergeable_state": pr.get("mergeable_state") or "",
+                "head_ref": ((pr.get("head") or {}).get("ref") or ""),
+                "head_sha": ((pr.get("head") or {}).get("sha") or ""),
+                "author": ((pr.get("user") or {}).get("login") or ""),
+                "tickets": [jira_lookup.get(key) or {"key": key, "status": "", "summary": "", "link": ""} for key in ticket_keys],
+            }
+        )
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "base": base,
+        "total_open_prs": len(queue_rows),
+        "prs": queue_rows,
+    }
 
 
 @app.get("/in-progress")
@@ -826,10 +1301,11 @@ async def github_branch_commits(
     base: str = "latest-tag",
     head: str = "master",
     version: str | None = None,
+    force_refresh: bool = False,
 ) -> Dict[str, Any]:
     """Return commits on `head` that are not reachable from `base`."""
     cache_key = (owner, repo, base, head, version or "")
-    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
+    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0 and not force_refresh:
         now = time.monotonic()
         async with _github_compare_cache_lock:
             cached = _github_compare_cache.get(cache_key)
@@ -1031,7 +1507,7 @@ async def github_branch_commits(
     latest_tag: str | None = None
     if commit_shas:
         tags_cache_key = (owner, repo)
-        if GITHUB_TAGS_CACHE_TTL_SECONDS > 0:
+        if GITHUB_TAGS_CACHE_TTL_SECONDS > 0 and not force_refresh:
             now = time.monotonic()
             async with _github_tags_cache_lock:
                 cached_tags = _github_tags_cache.get(tags_cache_key)
@@ -1076,7 +1552,7 @@ async def github_branch_commits(
 
         detail_cached = False
         commits_cached = False
-        if GITHUB_PR_CACHE_TTL_SECONDS > 0:
+        if GITHUB_PR_CACHE_TTL_SECONDS > 0 and not force_refresh:
             now = time.monotonic()
             async with _github_pr_detail_cache_lock:
                 cached_detail = _github_pr_detail_cache.get(detail_key)
@@ -1159,8 +1635,6 @@ async def github_branch_commits(
                 "is_merge_commit": is_merge_commit(commit),
             }
         )
-    commits.sort(key=lambda item: item.get("date") or "", reverse=True)
-
     payload = {
         "owner": owner,
         "repo": repo,
@@ -1169,6 +1643,7 @@ async def github_branch_commits(
         "requested_base": base,
         "requested_head": head,
         "requested_version": version or "",
+        "force_refresh": force_refresh,
         "requested_release_version": requested_release_version,
         "version_tag_found": version_tag_found,
         "version_unreleased_fallback": version_unreleased_fallback,
