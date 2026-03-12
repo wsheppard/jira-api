@@ -5,6 +5,7 @@ import './App.css';
 
 const API_BASE_URL = 'https://jira.api.jjrsoftware.co.uk';
 const STAGING_VIEW_ID = 'codexIntegrationCommits';
+const OPEN_CODEX_INTEGRATION_PRS_URL = 'https://github.com/palliativa/monorepo/pulls?q=is%3Apr+is%3Aopen+base%3Acodex%2Fintegration';
 
 const VIEW_CONFIG = {
   open: { label: 'Open Tickets by Due Date', endpoint: 'open-issues-by-due', type: 'tickets' },
@@ -20,6 +21,11 @@ const VIEW_CONFIG = {
     endpoint: 'github-branch-commits?owner=palliativa&repo=monorepo&base=latest-tag&head=codex/integration',
     type: 'githubCommits',
   },
+  codexIntegrationPrQueue: {
+    label: 'PR Queue -> codex/integration',
+    endpoint: 'github-pr-queue?owner=palliativa&repo=monorepo&base=codex/integration',
+    type: 'githubPrQueue',
+  },
   ticketQuestion: { label: 'Ask Tickets', endpoint: 'ticket-question', type: 'ticketQuestion' },
   pipeline: { label: 'Pipeline Dashboard', endpoint: 'pipeline-dashboard', type: 'pipeline' },
 };
@@ -34,6 +40,7 @@ const VIEW_ORDER = [
   'codexMoreInfo',
   'codexImplemented',
   'codexIntegrationCommits',
+  'codexIntegrationPrQueue',
   'ticketQuestion',
   'pipeline',
 ];
@@ -108,6 +115,12 @@ function App() {
   const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
   const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
   const [stagingNextVersion, setStagingNextVersion] = useState('');
+  const [stagingActiveTab, setStagingActiveTab] = useState('jiraCards');
+  const [githubRefreshInProgress, setGithubRefreshInProgress] = useState(false);
+  const [githubPrQueue, setGithubPrQueue] = useState([]);
+  const [prQueueSearch, setPrQueueSearch] = useState('');
+  const [mergeInProgressByTicket, setMergeInProgressByTicket] = useState({});
+  const [mergeMessageByTicket, setMergeMessageByTicket] = useState({});
   const [backfillInProgress, setBackfillInProgress] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState('');
   const [pipelineData, setPipelineData] = useState({});
@@ -115,6 +128,8 @@ function App() {
   const [ticketQuestionInput, setTicketQuestionInput] = useState('');
   const [ticketQuestionResult, setTicketQuestionResult] = useState(null);
   const [ticketQuestionRunning, setTicketQuestionRunning] = useState(false);
+  const [ticketCreateRunning, setTicketCreateRunning] = useState(false);
+  const [ticketAssistantLastText, setTicketAssistantLastText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 const [nextPollIn, setNextPollIn] = useState(30);
@@ -123,6 +138,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const hasSyncedInitialPath = useRef(false);
   const activeConfig = VIEW_CONFIG[activeView];
   const pollIntervalMs = activeConfig?.type === 'githubCommits'
+    ? 300000
+    : activeConfig?.type === 'githubPrQueue'
     ? 300000
     : activeConfig?.type === 'ticketQuestion'
       ? 0
@@ -237,11 +254,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return response.json();
   }, [summarizeErrorDetail]);
 
-  const fetchViewData = useCallback(async (view) => {
+  const fetchViewData = useCallback(async (view, options = {}) => {
     const config = VIEW_CONFIG[view];
     if (!config) {
       return;
     }
+    const forceGithubRefresh = options?.forceGithubRefresh === true;
     setNextPollIn(pollIntervalSeconds);
     if (config.type === 'ticketQuestion') {
       return;
@@ -259,6 +277,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
         } else {
           setPipelineCategories([]);
         }
+      } else if (config.type === 'githubPrQueue') {
+        const data = await fetchJson(config.endpoint);
+        setGithubPrQueue(Array.isArray(data?.prs) ? data.prs : []);
       } else if (config.type === 'githubCommits') {
         const stagingData = await fetchJson(`staging-tickets?project=AP&version=${encodeURIComponent(stagingVersion || 'next')}`);
         setStagingTickets(Array.isArray(stagingData?.tickets) ? stagingData.tickets : []);
@@ -267,7 +288,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
         setStagingResolvedVersion(stagingData?.resolved_version || '');
         setStagingNextVersion(stagingData?.next_version || '');
         const compareVersion = stagingData?.resolved_version || stagingVersion || 'next';
-        const endpointWithVersion = `${config.endpoint}&version=${encodeURIComponent(compareVersion)}`;
+        const endpointWithVersion = `${config.endpoint}&version=${encodeURIComponent(compareVersion)}`
+          + `${forceGithubRefresh ? '&force_refresh=1&refresh_nonce=' + Date.now() : ''}`;
         const data = await fetchJson(endpointWithVersion);
         setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
         setGithubCompare(data ?? null);
@@ -323,6 +345,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  useEffect(() => {
+    if (activeView !== STAGING_VIEW_ID) {
+      setStagingActiveTab('jiraCards');
+    }
+  }, [activeView]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !hasSyncedInitialPath.current) {
@@ -453,6 +481,113 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   const isReadyForRelease = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
+  const commitHasReadyForReleaseJira = (commit) =>
+    Array.isArray(commit?.jira)
+    && commit.jira.length > 0
+    && commit.jira.some((jiraItem) => isReadyForRelease(jiraItem?.status));
+
+  const codexIntegrationTagPattern = /^codex-int(?:egration|ergration)-(\d+)$/i;
+  const isCodexIntegrationTag = (tag) => typeof tag === 'string' && codexIntegrationTagPattern.test(tag.trim());
+  const sortCodexIntegrationTags = (tags) => (
+    [...new Set((Array.isArray(tags) ? tags : []).filter(isCodexIntegrationTag))]
+      .sort((a, b) => {
+        const aMatch = a.match(codexIntegrationTagPattern);
+        const bMatch = b.match(codexIntegrationTagPattern);
+        const aNum = aMatch ? Number(aMatch[1]) : Number.NaN;
+        const bNum = bMatch ? Number(bMatch[1]) : Number.NaN;
+        if (!Number.isNaN(aNum) && !Number.isNaN(bNum) && aNum !== bNum) {
+          return aNum - bNum;
+        }
+        return a.localeCompare(b);
+      })
+  );
+
+  const buildRangeTags = () => {
+    const allTagRows = new Map();
+    githubCommits.forEach((commit) => {
+      const tags = Array.isArray(commit?.tags) ? commit.tags : [];
+      tags.forEach((tag) => {
+        if (!tag || allTagRows.has(tag)) {
+          return;
+        }
+        allTagRows.set(tag, {
+          tag,
+          sha: commit?.sha || '',
+          date: commit?.date || '',
+        });
+      });
+    });
+    const all = Array.from(allTagRows.values()).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return {
+      all,
+      codex: sortCodexIntegrationTags(all.map((entry) => entry.tag)),
+    };
+  };
+
+  const buildCommitTagTimeline = () => {
+    const nestedCommitShas = new Set();
+    githubCommits.forEach((commit) => {
+      if (Array.isArray(commit?.nested_commits)) {
+        commit.nested_commits.forEach((nested) => {
+          if (nested?.sha) {
+            nestedCommitShas.add(nested.sha);
+          }
+        });
+      }
+    });
+
+    const seenShas = new Set();
+    const timelineAsc = [...githubCommits].filter((commit) => {
+      const sha = commit?.sha || '';
+      if (!sha || nestedCommitShas.has(sha) || seenShas.has(sha)) {
+        return false;
+      }
+      seenShas.add(sha);
+      return true;
+    });
+
+    const tagAnchors = [];
+    timelineAsc.forEach((commit, index) => {
+      const tags = Array.isArray(commit?.tags) ? commit.tags.filter(Boolean) : [];
+      tags.forEach((tag) => {
+        tagAnchors.push({
+          tag,
+          index,
+          sha: commit?.sha || '',
+          date: commit?.date || '',
+        });
+      });
+    });
+
+    const includedByIndex = timelineAsc.map(() => new Set());
+    tagAnchors.forEach((anchor) => {
+      for (let i = 0; i <= anchor.index; i += 1) {
+        includedByIndex[i].add(anchor.tag);
+      }
+    });
+
+    const rowsAsc = timelineAsc.map((commit, index) => {
+      const tagsOnCommit = Array.isArray(commit?.tags) ? [...new Set(commit.tags.filter(Boolean))].sort() : [];
+      const includedInRangeTags = Array.from(includedByIndex[index]).sort();
+      return {
+        ...commit,
+        tagsOnCommit,
+        includedInRangeTags,
+        hasTaggedBuild: includedInRangeTags.length > 0,
+      };
+    });
+
+    const rows = [...rowsAsc].reverse().map((row, index) => ({
+      ...row,
+      order: index + 1,
+    }));
+
+    return {
+      rows,
+      tagAnchors: [...new Map(tagAnchors.map((anchor) => [anchor.tag, anchor])).values()],
+      untaggedRows: rows.filter((row) => !row.hasTaggedBuild),
+    };
+  };
 
   const buildReleaseReconciliation = () => {
     const resolved = stagingResolvedVersion;
@@ -469,6 +604,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         status: ticket.statusName || '',
         link: ticket.link || '',
         labels: Array.isArray(ticket.labels) ? ticket.labels : [],
+        fixVersions,
         inRelease,
       });
     };
@@ -495,16 +631,36 @@ const [nextPollIn, setNextPollIn] = useState(30);
       });
     });
 
+    const ticketCodexTagMap = new Map();
+    githubCommits.forEach((commit) => {
+      const tags = sortCodexIntegrationTags(commit?.tags || []);
+      if (tags.length === 0) {
+        return;
+      }
+      const jiraItems = Array.isArray(commit?.jira) ? commit.jira : [];
+      jiraItems.forEach((jiraItem) => {
+        if (!jiraItem?.key) {
+          return;
+        }
+        if (!ticketCodexTagMap.has(jiraItem.key)) {
+          ticketCodexTagMap.set(jiraItem.key, new Set());
+        }
+        tags.forEach((tag) => ticketCodexTagMap.get(jiraItem.key).add(tag));
+      });
+    });
+
     const allKeys = new Set([...releaseMap.keys(), ...branchMap.keys()]);
     return Array.from(allKeys).map((key) => {
       const releaseData = releaseMap.get(key);
       const branchData = branchMap.get(key);
       const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
       const branchFixVersions = branchData?.fixVersions || [];
+      const ticketFixVersions = Array.from(new Set([...(releaseData?.fixVersions || []), ...branchFixVersions]));
       const inBranch = Boolean(branchData);
       const inRelease = Boolean(releaseData?.inRelease) || (resolved ? branchFixVersions.includes(resolved) : false);
       const isMerged = inBranch;
-      const isReleaseTaggedOnly = inRelease && !inBranch;
+      const hasFixVersion = ticketFixVersions.length > 0;
+      const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
       let mergedWhere = '';
       let mergedWhereDetail = '';
       if (inBranch) {
@@ -522,9 +678,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
         inBranch,
         inRelease,
         isMerged,
-        isReleaseTaggedOnly,
+        ticketFixVersions,
+        hasFixVersion,
+        isOutsideSelectedRelease,
         mergedWhere,
         mergedWhereDetail,
+        mergedCodexIntegrationTags: sortCodexIntegrationTags(Array.from(ticketCodexTagMap.get(key) || [])),
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
       };
     }).filter((item) => !item.isReleaseParent).sort((a, b) => {
@@ -553,16 +712,60 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }
   }, [activeView, fetchViewData, postJson, stagingResolvedVersion]);
 
+  const handleForceGithubRefresh = useCallback(async () => {
+    if (activeView !== STAGING_VIEW_ID) {
+      return;
+    }
+    setGithubRefreshInProgress(true);
+    try {
+      await fetchViewData(STAGING_VIEW_ID, { forceGithubRefresh: true });
+    } finally {
+      setGithubRefreshInProgress(false);
+    }
+  }, [activeView, fetchViewData]);
+
+  const handleMergeTicketPr = useCallback(async (ticketKey) => {
+    if (!ticketKey) {
+      return;
+    }
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm(`Merge open PR for ${ticketKey} into codex/integration?`);
+    if (!confirmed) {
+      return;
+    }
+    setMergeInProgressByTicket((prev) => ({ ...prev, [ticketKey]: true }));
+    setMergeMessageByTicket((prev) => ({ ...prev, [ticketKey]: '' }));
+    try {
+      const payload = await postJson(
+        `github-merge-ticket-pr?ticket=${encodeURIComponent(ticketKey)}&owner=palliativa&repo=monorepo&base=codex/integration`,
+      );
+      const prNumber = payload?.pr?.number;
+      const message = payload?.message || 'Merged successfully.';
+      setMergeMessageByTicket((prev) => ({
+        ...prev,
+        [ticketKey]: prNumber ? `Merged PR #${prNumber}. ${message}` : message,
+      }));
+      await fetchViewData(STAGING_VIEW_ID, { forceGithubRefresh: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'PR merge failed.';
+      setMergeMessageByTicket((prev) => ({ ...prev, [ticketKey]: `Merge failed: ${message}` }));
+    } finally {
+      setMergeInProgressByTicket((prev) => ({ ...prev, [ticketKey]: false }));
+    }
+  }, [fetchViewData, postJson]);
+
   const handleAskTicketQuestion = useCallback(async () => {
     const question = ticketQuestionInput.trim();
     if (!question) {
       setErrorMessage('Enter a question first.');
       return;
     }
+    setTicketAssistantLastText(question);
     setTicketQuestionRunning(true);
     setErrorMessage('');
     try {
-      const data = await postJson('ticket-question', { question, limit: 40 });
+      const data = await postJson('ticket-assistant', { text: question, limit: 40, dry_run: true });
       setTicketQuestionResult(data ?? null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ticket question failed.';
@@ -572,7 +775,57 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }
   }, [postJson, ticketQuestionInput]);
 
+  const handleConfirmCreateTickets = useCallback(async () => {
+    const text = ticketAssistantLastText.trim();
+    if (!text) {
+      setErrorMessage('No pending create request found.');
+      return;
+    }
+    setTicketCreateRunning(true);
+    setErrorMessage('');
+    try {
+      const data = await postJson('ticket-assistant', { text, limit: 40, dry_run: false });
+      setTicketQuestionResult(data ?? null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ticket creation failed.';
+      setErrorMessage(message);
+    } finally {
+      setTicketCreateRunning(false);
+    }
+  }, [postJson, ticketAssistantLastText]);
+
+  const handleCancelCreateTickets = useCallback(() => {
+    setTicketQuestionResult((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        message: 'Creation cancelled.',
+      };
+    });
+  }, []);
+
   const commitGroups = buildCommitGroups();
+  const filteredPrQueue = githubPrQueue.filter((pr) => {
+    const query = prQueueSearch.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    const ticketText = Array.isArray(pr?.tickets)
+      ? pr.tickets.map((ticket) => `${ticket?.key || ''} ${ticket?.summary || ''}`).join(' ')
+      : '';
+    const haystack = [
+      String(pr?.number || ''),
+      pr?.title || '',
+      pr?.head_ref || '',
+      pr?.author || '',
+      ticketText,
+    ].join(' ').toLowerCase();
+    return haystack.includes(query);
+  });
+  const rangeTags = buildRangeTags();
+  const commitTagTimeline = buildCommitTagTimeline();
   const commitGroupByKey = new Map(
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
@@ -711,12 +964,173 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   >
                     {backfillInProgress ? 'Backfilling...' : 'Backfill Missing Fix Version'}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary"
+                    onClick={handleForceGithubRefresh}
+                    disabled={githubRefreshInProgress}
+                  >
+                    {githubRefreshInProgress ? 'Refreshing GitHub...' : 'Force GitHub Refresh'}
+                  </button>
+                  <a
+                    href={OPEN_CODEX_INTEGRATION_PRS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm btn-outline-dark"
+                  >
+                    Open PR Queue -&gt; codex/integration
+                  </a>
                 </div>
                 {backfillMessage && <div className="small text-muted mb-2">{backfillMessage}</div>}
                 {!stagingReleaseParent && <div className="text-muted small">No release ticket found for this version.</div>}
+                <div className="small text-muted">
+                  Tags in selected hash range: {rangeTags.all.length}
+                  {rangeTags.codex.length > 0 ? ` (codex-integration: ${rangeTags.codex.length})` : ''}
+                </div>
+                {rangeTags.codex.length > 0 && (
+                  <div className="mt-2 d-flex flex-wrap gap-1">
+                    {rangeTags.codex.map((tag) => (
+                      <span key={`range-codex-tag-${tag}`} className="badge staging-tag-badge">{tag}</span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="mb-3">
-                <div className="row g-3">
+                <ul className="nav nav-tabs">
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link ${stagingActiveTab === 'jiraCards' ? 'active' : ''}`}
+                      onClick={() => setStagingActiveTab('jiraCards')}
+                      aria-current={stagingActiveTab === 'jiraCards' ? 'page' : undefined}
+                    >
+                      Jira Cards
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link ${stagingActiveTab === 'commitTimeline' ? 'active' : ''}`}
+                      onClick={() => setStagingActiveTab('commitTimeline')}
+                      aria-current={stagingActiveTab === 'commitTimeline' ? 'page' : undefined}
+                    >
+                      Commit Tag Timeline
+                    </button>
+                  </li>
+                </ul>
+
+                {stagingActiveTab === 'commitTimeline' && (
+                  <div className="card border mt-3">
+                    <div className="card-header d-flex flex-wrap align-items-center gap-2">
+                      <span className="fw-semibold">Commit Tag Timeline</span>
+                      <span className="badge text-bg-light border">{commitTagTimeline.rows.length} commits</span>
+                      <span className="badge text-bg-light border">{commitTagTimeline.tagAnchors.length} tag points</span>
+                      <span className={`badge ${commitTagTimeline.untaggedRows.length > 0 ? 'text-bg-warning' : 'text-bg-success'}`}>
+                        {commitTagTimeline.untaggedRows.length} with no tag reachable in selected range
+                      </span>
+                    </div>
+                    <div className="card-body p-0">
+                      {commitTagTimeline.rows.length === 0 ? (
+                        <div className="p-3 text-muted small">No commits in selected range.</div>
+                      ) : (
+                        <div className="table-responsive">
+                          <table className="table table-sm mb-0 align-middle">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '5rem' }}>#</th>
+                                <th>Commit</th>
+                                <th style={{ minWidth: '12rem' }}>Jira</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {commitTagTimeline.rows.map((row) => (
+                                <tr
+                                  key={`timeline-${row.sha}`}
+                                  className={commitHasReadyForReleaseJira(row) ? 'staging-commit-ready' : ''}
+                                >
+                                  <td className="text-muted">{row.order}</td>
+                                  <td>
+                                    <div className="commit-hash-message">
+                                      <span className="commit-hash">
+                                        {row.link ? (
+                                          <a href={row.link} target="_blank" rel="noopener noreferrer">
+                                            {row.sha?.slice(0, 7) ?? 'unknown'}
+                                          </a>
+                                        ) : (
+                                          row.sha?.slice(0, 7) ?? 'unknown'
+                                        )}
+                                      </span>
+                                      <span className="commit-message-text">{row.message || 'No message'}</span>
+                                      {row.is_merge_commit && (
+                                        <span className="badge text-bg-info ms-2">MERGE</span>
+                                      )}
+                                    </div>
+                                    <div className="text-muted small">
+                                      {row.author || 'Unknown'} · {row.date ? new Date(row.date).toLocaleString() : 'Unknown'}
+                                    </div>
+                                    {row.is_merge_commit && renderPrLinks(row.prs) && (
+                                      <div className="small mt-1">PRs: {renderPrLinks(row.prs)}</div>
+                                    )}
+                                    {row.tagsOnCommit.length > 0 && (
+                                      <div className="mt-1">
+                                        {row.tagsOnCommit.map((tag) => (
+                                          <span key={`${row.sha}-on-${tag}`} className="badge text-bg-secondary me-1">{tag}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <div className="small mt-1">
+                                      <span className="text-muted me-1">Reachable in range:</span>
+                                      {row.hasTaggedBuild ? (
+                                        <>
+                                          {row.includedInRangeTags.slice(0, 2).map((tag) => (
+                                            <span key={`${row.sha}-reachable-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
+                                          ))}
+                                          {row.includedInRangeTags.length > 2 && (
+                                            <span className="text-muted">+{row.includedInRangeTags.length - 2} more</span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className="badge text-bg-warning">None</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    {Array.isArray(row.jira) && row.jira.length > 0 ? (
+                                      row.jira.map((jiraItem) => (
+                                        <div key={`${row.sha}-jira-${jiraItem.key}`} className="mb-1">
+                                          {jiraItem.link ? (
+                                            <a href={jiraItem.link} target="_blank" rel="noopener noreferrer">
+                                              {jiraItem.key}
+                                            </a>
+                                          ) : (
+                                            <span>{jiraItem.key}</span>
+                                          )}
+                                          {jiraItem.status && (
+                                            <span className={`badge ms-2 ${isReadyForRelease(jiraItem.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                                              {jiraItem.status}
+                                            </span>
+                                          )}
+                                          {jiraItem.summary && (
+                                            <div className="text-muted small">{jiraItem.summary}</div>
+                                          )}
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <span className="text-muted small">none</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {stagingActiveTab === 'jiraCards' && (
+                  <div className="row g-3 mt-1">
                   {noJiraGroup && noJiraGroup.commits.length > 0 && (
                     <div className="col-12 col-xl-6">
                       <div className="card h-100 staging-card staging-status-warning">
@@ -764,13 +1178,25 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       >
                       <div className="card-header staging-status-header">
                         <div className="d-flex align-items-start justify-content-between gap-2">
-                          {item.link ? (
-                            <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                              {item.key}
-                            </a>
-                          ) : (
-                            <span className="fw-semibold">{item.key}</span>
-                          )}
+                          <div className="d-flex align-items-center gap-2">
+                            {item.link ? (
+                              <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                                {item.key}
+                              </a>
+                            ) : (
+                              <span className="fw-semibold">{item.key}</span>
+                            )}
+                            {!item.inBranch && (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-success"
+                                disabled={mergeInProgressByTicket[item.key] === true}
+                                onClick={() => handleMergeTicketPr(item.key)}
+                              >
+                                {mergeInProgressByTicket[item.key] ? 'Merging PR...' : 'Merge PR'}
+                              </button>
+                            )}
+                          </div>
                           <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
                             {item.status && (
                               <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
@@ -779,15 +1205,28 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             )}
                             {item.isMerged ? (
                               <span className="badge text-bg-success">MERGED</span>
-                            ) : item.isReleaseTaggedOnly ? (
-                              <span className="badge text-bg-info">RELEASE TAGGED</span>
                             ) : (
-                              <span className="badge text-bg-danger">Not MERGED</span>
+                              <span className="badge text-bg-danger">NOT MERGED</span>
+                            )}
+                            {Array.isArray(item.ticketFixVersions) && item.ticketFixVersions.length > 0 && (
+                              <span className="badge text-bg-info">
+                                {`Fix Version: ${item.ticketFixVersions.join(', ')}`}
+                              </span>
+                            )}
+                            {item.isOutsideSelectedRelease && (
+                              <span className="badge text-bg-warning">
+                                {`Outside Selected Release (${stagingResolvedVersion})`}
+                              </span>
                             )}
                             {item.isMerged && item.mergedWhere && (
                               <span className="badge text-bg-light border">{item.mergedWhere}</span>
                             )}
-                            {item.inBranch && !item.inRelease && (
+                            {item.isMerged && item.mergedCodexIntegrationTags.length > 0 && (
+                              <span className="badge text-bg-light border">
+                                {`Reachable Tag: ${item.mergedCodexIntegrationTags[item.mergedCodexIntegrationTags.length - 1]}`}
+                              </span>
+                            )}
+                            {item.inBranch && !item.hasFixVersion && (
                               <span className="badge text-bg-warning">Missing Fix Version</span>
                             )}
                             {Array.isArray(item.labels) && item.labels.map((label) => (
@@ -798,16 +1237,33 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         <div className="text-muted mt-2">
                           {item.title}
                         </div>
+                        {mergeMessageByTicket[item.key] && (
+                          <div className={`small mt-2 ${mergeMessageByTicket[item.key].startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
+                            {mergeMessageByTicket[item.key]}
+                          </div>
+                        )}
                         {item.isMerged && item.mergedWhereDetail && (
                           <div className="text-muted small mt-1">
                             Range: {item.mergedWhereDetail}
+                          </div>
+                        )}
+                        {item.isMerged && (
+                          <div className="small mt-2">
+                            <span className="text-muted me-1">Codex-integration tag history:</span>
+                            {item.mergedCodexIntegrationTags.length > 0 ? (
+                              item.mergedCodexIntegrationTags.map((tag) => (
+                                <span key={`${item.key}-codex-tag-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
+                              ))
+                            ) : (
+                              <span className="text-muted">No codex-integration tag on commits in this range.</span>
+                            )}
                           </div>
                         )}
                       </div>
                       <div className="card-body">
                         {commitsForItem.length === 0 ? (
                           <div className="text-muted small">
-                            {item.isReleaseTaggedOnly
+                            {!item.isMerged && item.inRelease
                               ? 'In Jira Fix Version, but no GitHub commits/PRs found in this selected compare range.'
                               : item.isMerged
                                 ? 'Merged, but no commits/PRs in this selected compare range.'
@@ -818,7 +1274,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             {commitsForItem.map((commit) => {
                               const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
                               return (
-                                <li key={`${item.key}-${commit.sha}`} className="list-group-item px-0">
+                                <li
+                                  key={`${item.key}-${commit.sha}`}
+                                  className={`list-group-item px-0 ${commitHasReadyForReleaseJira(commit) ? 'staging-commit-ready-item' : ''}`}
+                                >
                                   <div className="commit-tree">
                                     <div className="commit-parent-row">
                                       <div className={`connector-lane ${hasNested ? 'has-children' : ''}`} aria-hidden="true">
@@ -897,8 +1356,115 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       })()}
                     </div>
                   ))}
-                </div>
+                  </div>
+                )}
               </div>
+          </div>
+        </div>
+      ) : activeConfig?.type === 'githubPrQueue' ? (
+        <div className="card shadow-sm">
+          <div className="card-body">
+            <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+              <div className="fw-semibold d-flex align-items-center gap-2">
+                <span>Open PRs -> codex/integration</span>
+                <span className="badge text-bg-primary">{filteredPrQueue.length}</span>
+                {prQueueSearch.trim() && (
+                  <span className="badge text-bg-light border">of {githubPrQueue.length}</span>
+                )}
+              </div>
+              <div className="d-flex align-items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-primary"
+                  onClick={() => fetchViewData(activeView)}
+                >
+                  Refresh
+                </button>
+                <a
+                  href={OPEN_CODEX_INTEGRATION_PRS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-sm btn-outline-dark"
+                >
+                  Open on GitHub
+                </a>
+              </div>
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="prQueueSearchInput" className="form-label fw-semibold mb-1">Search tickets</label>
+              <input
+                id="prQueueSearchInput"
+                type="search"
+                className="form-control"
+                value={prQueueSearch}
+                onChange={(event) => setPrQueueSearch(event.target.value)}
+                placeholder="e.g. AP-123, invoice, payment, release"
+              />
+            </div>
+
+            {filteredPrQueue.length === 0 ? (
+              <p className="text-muted fst-italic mb-0">No open PRs match the current search.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>PR</th>
+                      <th>Title</th>
+                      <th>Ticket(s)</th>
+                      <th>Head Branch</th>
+                      <th>Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPrQueue.map((pr) => (
+                      <tr key={`queue-pr-${pr.number}`}>
+                        <td>
+                          {pr.url ? (
+                            <a href={pr.url} target="_blank" rel="noopener noreferrer">#{pr.number}</a>
+                          ) : (
+                            <span>#{pr.number}</span>
+                          )}
+                          {pr.draft && <span className="badge text-bg-warning ms-2">DRAFT</span>}
+                        </td>
+                        <td>
+                          <div>{pr.title || 'Untitled'}</div>
+                          <div className="text-muted small">{pr.author || 'unknown author'}</div>
+                        </td>
+                        <td>
+                          {Array.isArray(pr.tickets) && pr.tickets.length > 0 ? (
+                            pr.tickets.map((ticket) => (
+                              <div key={`queue-pr-${pr.number}-ticket-${ticket.key || 'unknown'}`} className="mb-1">
+                                {ticket?.link ? (
+                                  <a href={ticket.link} target="_blank" rel="noopener noreferrer">{ticket.key}</a>
+                                ) : (
+                                  <span>{ticket?.key || 'Unknown ticket'}</span>
+                                )}
+                                {ticket?.status && (
+                                  <span className="text-muted small"> · {ticket.status}</span>
+                                )}
+                                {ticket?.summary && (
+                                  <div className="text-muted small">{ticket.summary}</div>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <span className="text-muted small">No ticket found in title/body/branch</span>
+                          )}
+                        </td>
+                        <td>
+                          <code>{pr.head_ref || '-'}</code>
+                        </td>
+                        <td className="text-muted small">
+                          {pr.updated_at ? new Date(pr.updated_at).toLocaleString() : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       ) : activeConfig?.type === 'ticketQuestion' ? (
@@ -933,13 +1499,70 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     <strong>Interpretation:</strong> {ticketQuestionResult.interpretation}
                   </div>
                 )}
-                <div className="small">
-                  <strong>JQL:</strong> <code>{ticketQuestionResult.jql}</code>
-                </div>
-                <div className="small text-muted">
-                  {ticketQuestionResult.total_matches} match(es), showing up to {ticketQuestionResult.limited_to}
-                </div>
-                <TicketsList tickets={Array.isArray(ticketQuestionResult.tickets) ? ticketQuestionResult.tickets : []} />
+                {ticketQuestionResult.message && (
+                  <div className="small text-muted">{ticketQuestionResult.message}</div>
+                )}
+
+                {ticketQuestionResult.intent === 'search_tickets' && (
+                  <>
+                    {ticketQuestionResult?.data?.jql && (
+                      <div className="small">
+                        <strong>JQL:</strong> <code>{ticketQuestionResult.data.jql}</code>
+                      </div>
+                    )}
+                    <div className="small text-muted">
+                      {ticketQuestionResult?.data?.total_matches ?? 0} match(es), showing up to {ticketQuestionResult?.data?.limited_to ?? 0}
+                    </div>
+                    <TicketsList tickets={Array.isArray(ticketQuestionResult?.data?.tickets) ? ticketQuestionResult.data.tickets : []} />
+                  </>
+                )}
+
+                {ticketQuestionResult.intent === 'create_linked_software_tickets' && (
+                  <div className="card border-light bg-light-subtle">
+                    <div className="card-body">
+                      <div className="small">
+                        <strong>Design ticket:</strong> {ticketQuestionResult?.data?.design_ticket_key || 'Unknown'}
+                      </div>
+                      <div className="small">
+                        <strong>Target project:</strong> {ticketQuestionResult?.data?.target_project || 'Unknown'}
+                      </div>
+                      <div className="small">
+                        <strong>Mode:</strong> {ticketQuestionResult?.data?.dry_run ? 'Dry run' : 'Applied'}
+                      </div>
+                      <div className="small mt-2">
+                        <strong>Implementation tickets:</strong>
+                      </div>
+                      <ul className="mb-0">
+                        {(ticketQuestionResult?.data?.tickets || []).map((item, idx) => (
+                          <li key={`ticket-assistant-create-${idx}`}>
+                            {item?.summary || item?.key || 'Unnamed ticket'}
+                          </li>
+                        ))}
+                      </ul>
+                      {ticketQuestionResult?.data?.dry_run && (
+                        <div className="mt-3 d-flex align-items-center gap-2">
+                          <span className="small">Create these tickets now?</span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={handleConfirmCreateTickets}
+                            disabled={ticketCreateRunning}
+                          >
+                            {ticketCreateRunning ? 'Creating...' : 'Yes, Create'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={handleCancelCreateTickets}
+                            disabled={ticketCreateRunning}
+                          >
+                            No
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

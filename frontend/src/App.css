@@ -246,3 +246,18 @@
   background-color: transparent;
   color: inherit;
 }
+
+.staging-tag-badge {
+  background: #e9eef6;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  font-weight: 500;
+}
+
+.staging-commit-ready > td {
+  background-color: #d1e7dd !important;
+}
+
+.staging-commit-ready-item {
+  background: #eaf7ed;
+}
