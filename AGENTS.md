@@ -27,6 +27,15 @@ This file contains instructions for the coding agent on how to work within this 
 - Use the modern Docker Compose CLI with this repo's `compose.yml`.
 - Default command: `docker compose up -d --build`
 
+## Release Flow Purpose (Agent Signpost)
+
+- This web app is primarily a release-flow control surface.
+- Canonical flow: Jira ticket -> GitHub PR targeting `codex/integration` -> merge into `codex/integration` (staging branch for next release) -> included in release scope.
+- The staging/reconciliation views exist to compare release intent (Jira scope/status/fix version) against delivery reality (open PRs, merged commits, branch reachability).
+- UI actions must reflect real backend preconditions. Do not show an action unless the backend can execute it successfully in the current state.
+- For merge actions, gate on verified open PR state for the ticket and target base branch; do not infer mergeability from "not yet seen in branch" alone.
+- Prefer fail-hard behavior for ambiguous release state (for example multiple matching PRs) with explicit operator feedback, not silent fallback behavior.
+
 ## Semantic Index (feature → code map)
 
 - Backend API: `backend/main.py` – FastAPI app exposing Jira views (`/open-issues-by-due`, `/in-progress`, `/backlog`, `/manager-meeting`, `/recently-updated` with latest comment extraction) plus Bitbucket utilities (`/bitbucket-test`, `/bitbucket-commits`, `/bitbucket-repos`) and pipeline/deployment data (`/pipeline-dashboard`, `/deployments`).

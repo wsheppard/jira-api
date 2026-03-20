@@ -1599,6 +1599,18 @@ def _semver_key(version_name: str) -> Tuple[int, ...]:
     return tuple(int(part) for part in parts)
 
 
+def _next_minor_version(version_name: str) -> str | None:
+    parts = _semver_key(version_name)
+    if len(parts) < 2:
+        return None
+    major, minor = parts[0], parts[1]
+    return f"{major}.{minor + 1}.0"
+
+
+def _strip_v_prefix(version_name: str) -> str:
+    return version_name[1:] if version_name.startswith("v") else version_name
+
+
 @app.get("/staging-tickets")
 async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[str, Any]:
     """Return staging tickets for a release version; version=next resolves the next unreleased Jira version."""
@@ -1638,11 +1650,53 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
     )
     available_versions = sorted(set(unreleased_versions + released_versions[:12]), key=_semver_key, reverse=True)
 
+    headers_github = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    tags_url = "https://api.github.com/repos/palliativa/monorepo/tags"
+    repo_semver_tags: List[str] = []
+    async with httpx.AsyncClient() as client:
+        page = 1
+        while True:
+            tags_resp = await client.get(tags_url, headers=headers_github, params={"per_page": 100, "page": page})
+            if tags_resp.status_code != 200:
+                raise HTTPException(status_code=tags_resp.status_code, detail=tags_resp.text)
+            rows = tags_resp.json() or []
+            if not rows:
+                break
+            for row in rows:
+                name = row.get("name") or ""
+                if re.fullmatch(r"v?\d+\.\d+\.\d+", name):
+                    repo_semver_tags.append(name)
+            page += 1
+
+    if not repo_semver_tags:
+        raise HTTPException(status_code=409, detail='Cannot resolve "next": no semver tags found in GitHub repository.')
+    latest_repo_tag = sorted(set(repo_semver_tags), key=_semver_key)[-1]
+    latest_prod_version = _strip_v_prefix(latest_repo_tag)
+    computed_next_version = _next_minor_version(latest_prod_version)
+
     resolved_version = version
     if version == "next":
-        if not unreleased_versions:
-            raise HTTPException(status_code=404, detail=f'No unreleased versions found for project "{project}"')
-        resolved_version = unreleased_versions[0]
+        if not computed_next_version:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f'Cannot resolve version "next" from latest repository tag "{latest_repo_tag}" '
+                    f'for project "{project}"'
+                ),
+            )
+        if computed_next_version not in unreleased_versions:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f'Expected next version "{computed_next_version}" from latest repository tag "{latest_repo_tag}", '
+                    f'but it is not an unreleased Jira version for project "{project}".'
+                ),
+            )
+        resolved_version = computed_next_version
 
     jql = f'project = "{project}" AND fixVersion = "{resolved_version}" ORDER BY created DESC'
     fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated"]
@@ -1691,7 +1745,7 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         "requested_version": version,
         "resolved_version": resolved_version,
         "available_versions": available_versions,
-        "next_version": unreleased_versions[0] if unreleased_versions else None,
+        "next_version": computed_next_version,
         "release_parent": release_parent,
         "tickets": results,
     }
@@ -1767,4 +1821,3 @@ async def staging_backfill_fix_version(
         "candidates": sorted(branch_keys),
         "updated": sorted(updated),
     }
-

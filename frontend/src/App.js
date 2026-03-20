@@ -279,6 +279,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
         const data = await fetchJson(endpointWithVersion);
         setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
         setGithubCompare(data ?? null);
+        const prQueueData = await fetchJson('github-pr-queue?owner=palliativa&repo=monorepo&base=codex/integration');
+        setGithubPrQueue(Array.isArray(prQueueData?.prs) ? prQueueData.prs : []);
       } else {
         const data = await fetchJson(config.endpoint);
         setTicketsByView((prev) => ({
@@ -639,21 +641,36 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return Array.from(allKeys).map((key) => {
       const releaseData = releaseMap.get(key);
       const branchData = branchMap.get(key);
+      const openPrsForTicket = githubPrQueue.filter((pr) => (
+        Array.isArray(pr?.tickets) && pr.tickets.some((ticket) => (ticket?.key || '').toUpperCase() === key)
+      ));
+      const mergeReadyPrs = openPrsForTicket.filter((pr) => !pr?.draft);
       const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
       const branchFixVersions = branchData?.fixVersions || [];
       const ticketFixVersions = Array.from(new Set([...(releaseData?.fixVersions || []), ...branchFixVersions]));
       const inBranch = Boolean(branchData);
       const inRelease = Boolean(releaseData?.inRelease) || (resolved ? branchFixVersions.includes(resolved) : false);
       const isMerged = inBranch;
+      const canMergePr = !inBranch && mergeReadyPrs.length === 1;
       const hasFixVersion = ticketFixVersions.length > 0;
       const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
       let mergedWhere = '';
       let mergedWhereDetail = '';
+      let mergeStatus = '';
       if (inBranch) {
         mergedWhere = compareToRef ? `Seen in ${compareToRef}` : 'Seen in selected compare head';
         mergedWhereDetail = compareFromRef && compareToRef ? `${compareFromRef} -> ${compareToRef}` : '';
       } else if (inRelease) {
         mergedWhere = resolved ? `In Jira Fix Version ${resolved}` : 'In Jira release scope';
+      }
+      if (!inBranch) {
+        if (mergeReadyPrs.length === 0 && openPrsForTicket.length > 0) {
+          mergeStatus = 'Open PR exists but is draft';
+        } else if (openPrsForTicket.length === 0) {
+          mergeStatus = 'No open PR to codex/integration';
+        } else if (mergeReadyPrs.length > 1) {
+          mergeStatus = `Multiple merge-ready PRs (${mergeReadyPrs.length})`;
+        }
       }
       return {
         key,
@@ -669,6 +686,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
         isOutsideSelectedRelease,
         mergedWhere,
         mergedWhereDetail,
+        canMergePr,
+        mergeStatus,
+        openPrCount: openPrsForTicket.length,
+        mergeReadyPrCount: mergeReadyPrs.length,
         mergedCodexIntegrationTags: sortCodexIntegrationTags(Array.from(ticketCodexTagMap.get(key) || [])),
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
       };
@@ -1166,7 +1187,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             ) : (
                               <span className="fw-semibold">{item.key}</span>
                             )}
-                            {!item.inBranch && (
+                            {!item.inBranch && item.canMergePr && (
                               <button
                                 type="button"
                                 className="btn btn-sm btn-outline-success"
@@ -1220,6 +1241,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                         {mergeMessageByTicket[item.key] && (
                           <div className={`small mt-2 ${mergeMessageByTicket[item.key].startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
                             {mergeMessageByTicket[item.key]}
+                          </div>
+                        )}
+                        {!item.inBranch && !item.canMergePr && item.mergeStatus && (
+                          <div className="small mt-2 text-muted">
+                            {item.mergeStatus}
                           </div>
                         )}
                         {item.isMerged && item.mergedWhereDetail && (
