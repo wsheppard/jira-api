@@ -644,7 +644,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const openPrsForTicket = githubPrQueue.filter((pr) => (
         Array.isArray(pr?.tickets) && pr.tickets.some((ticket) => (ticket?.key || '').toUpperCase() === key)
       ));
-      const mergeReadyPrs = openPrsForTicket.filter((pr) => !pr?.draft);
+      const mergeReadyPrs = openPrsForTicket.filter((pr) => !pr?.draft && !pr?.has_merge_conflicts);
       const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
       const branchFixVersions = branchData?.fixVersions || [];
       const ticketFixVersions = Array.from(new Set([...(releaseData?.fixVersions || []), ...branchFixVersions]));
@@ -664,7 +664,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
         mergedWhere = resolved ? `In Jira Fix Version ${resolved}` : 'In Jira release scope';
       }
       if (!inBranch) {
-        if (mergeReadyPrs.length === 0 && openPrsForTicket.length > 0) {
+        if (openPrsForTicket.some((pr) => pr?.has_merge_conflicts)) {
+          mergeStatus = 'Open PR has merge conflicts';
+        } else if (mergeReadyPrs.length === 0 && openPrsForTicket.length > 0) {
           mergeStatus = 'Open PR exists but is draft';
         } else if (openPrsForTicket.length === 0) {
           mergeStatus = 'No open PR to codex/integration';
@@ -1423,6 +1425,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     <tr>
                       <th>PR</th>
                       <th>Title</th>
+                      <th>Merge</th>
                       <th>Ticket(s)</th>
                       <th>Head Branch</th>
                       <th>Updated</th>
@@ -1438,10 +1441,18 @@ const [nextPollIn, setNextPollIn] = useState(30);
                             <span>#{pr.number}</span>
                           )}
                           {pr.draft && <span className="badge text-bg-warning ms-2">DRAFT</span>}
+                          {pr.has_merge_conflicts && <span className="badge text-bg-danger ms-2">CONFLICT</span>}
                         </td>
                         <td>
                           <div>{pr.title || 'Untitled'}</div>
                           <div className="text-muted small">{pr.author || 'unknown author'}</div>
+                        </td>
+                        <td>
+                          {pr.has_merge_conflicts ? (
+                            <span className="text-danger small">Merge conflicts detected</span>
+                          ) : (
+                            <span className="text-muted small">{pr.mergeable_state || '-'}</span>
+                          )}
                         </td>
                         <td>
                           {Array.isArray(pr.tickets) && pr.tickets.length > 0 ? (

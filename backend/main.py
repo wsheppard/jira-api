@@ -1119,6 +1119,7 @@ async def github_pr_queue(
     pulls_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
     page = 1
     open_prs: List[Dict[str, Any]] = []
+    pr_mergeability: Dict[int, str] = {}
     async with httpx.AsyncClient() as client:
         while True:
             resp = await client.get(
@@ -1133,6 +1134,19 @@ async def github_pr_queue(
                 break
             open_prs.extend(rows)
             page += 1
+
+        async def fetch_mergeable_state(pr_number: int) -> tuple[int, str]:
+            detail_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+            detail_resp = await client.get(detail_url, headers=headers)
+            if detail_resp.status_code != 200:
+                raise HTTPException(status_code=detail_resp.status_code, detail=detail_resp.text)
+            detail = detail_resp.json() or {}
+            return pr_number, str(detail.get("mergeable_state") or "").lower()
+
+        pr_numbers = [int(pr.get("number")) for pr in open_prs if isinstance(pr.get("number"), int)]
+        if pr_numbers:
+            mergeability_rows = await asyncio.gather(*(fetch_mergeable_state(pr_number) for pr_number in pr_numbers))
+            pr_mergeability = {pr_number: merge_state for pr_number, merge_state in mergeability_rows}
 
     def extract_ticket_keys_from_text(*parts: str) -> List[str]:
         seen: set[str] = set()
@@ -1157,6 +1171,9 @@ async def github_pr_queue(
     jira_lookup = await fetch_jira_statuses(sorted(all_ticket_keys))
     queue_rows: List[Dict[str, Any]] = []
     for pr in open_prs:
+        pr_number = pr.get("number")
+        mergeable_state = pr_mergeability.get(pr_number, str(pr.get("mergeable_state") or "").lower())
+        has_merge_conflicts = mergeable_state == "dirty"
         ticket_keys = extract_ticket_keys_from_text(
             pr.get("title") or "",
             pr.get("body") or "",
@@ -1164,14 +1181,16 @@ async def github_pr_queue(
         )
         queue_rows.append(
             {
-                "number": pr.get("number"),
+                "number": pr_number,
                 "title": pr.get("title") or "",
                 "url": pr.get("html_url") or "",
                 "state": pr.get("state") or "",
                 "draft": bool(pr.get("draft")),
                 "created_at": pr.get("created_at") or "",
                 "updated_at": pr.get("updated_at") or "",
-                "mergeable_state": pr.get("mergeable_state") or "",
+                "mergeable_state": mergeable_state,
+                "has_merge_conflicts": has_merge_conflicts,
+                "merge_warning": "Merge conflicts detected" if has_merge_conflicts else "",
                 "head_ref": ((pr.get("head") or {}).get("ref") or ""),
                 "head_sha": ((pr.get("head") or {}).get("sha") or ""),
                 "author": ((pr.get("user") or {}).get("login") or ""),
