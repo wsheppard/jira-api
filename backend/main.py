@@ -2,11 +2,13 @@
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import os
 import re
 import time
+import uuid
 from datetime import date
 from typing import Any, Dict, List, Literal, Tuple
 
@@ -115,6 +117,9 @@ _github_pr_detail_cache: Dict[Tuple[str, str, int], Tuple[float, Dict[str, str] 
 _github_pr_detail_cache_lock = asyncio.Lock()
 _github_pr_commits_cache: Dict[Tuple[str, str, int], Tuple[float, List[Dict[str, str]]]] = {}
 _github_pr_commits_cache_lock = asyncio.Lock()
+TICKET_ASSISTANT_APPROVAL_TTL_SECONDS = int(os.getenv("TICKET_ASSISTANT_APPROVAL_TTL_SECONDS", "1800"))
+_ticket_assistant_approvals: Dict[str, Tuple[float, str, str]] = {}
+_ticket_assistant_approvals_lock = asyncio.Lock()
 
 
 class TicketQuestionRequest(BaseModel):
@@ -161,6 +166,7 @@ class TicketAssistantRequest(BaseModel):
     text: str = Field(min_length=3, max_length=4000)
     limit: int = Field(default=20, ge=1, le=100)
     dry_run: bool = True
+    approval_token: str = Field(default="", max_length=100)
 
 
 class TicketAssistantResponse(BaseModel):
@@ -168,6 +174,39 @@ class TicketAssistantResponse(BaseModel):
     interpretation: str
     message: str = ""
     data: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _assistant_text_fingerprint(text: str) -> str:
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+
+
+async def _mint_ticket_assistant_approval_token(intent: str, text: str) -> tuple[str, int]:
+    token = uuid.uuid4().hex
+    expires_at = time.monotonic() + TICKET_ASSISTANT_APPROVAL_TTL_SECONDS
+    fingerprint = _assistant_text_fingerprint(text)
+    async with _ticket_assistant_approvals_lock:
+        _ticket_assistant_approvals[token] = (expires_at, intent, fingerprint)
+    return token, TICKET_ASSISTANT_APPROVAL_TTL_SECONDS
+
+
+async def _consume_ticket_assistant_approval_token(token: str, intent: str, text: str) -> bool:
+    normalized = token.strip()
+    if not normalized:
+        return False
+    now = time.monotonic()
+    expected_fingerprint = _assistant_text_fingerprint(text)
+    async with _ticket_assistant_approvals_lock:
+        stale_tokens = [key for key, (expires_at, _, _) in _ticket_assistant_approvals.items() if expires_at <= now]
+        for stale in stale_tokens:
+            _ticket_assistant_approvals.pop(stale, None)
+        payload = _ticket_assistant_approvals.get(normalized)
+        if not payload:
+            return False
+        expires_at, stored_intent, stored_fingerprint = payload
+        if expires_at <= now or stored_intent != intent or stored_fingerprint != expected_fingerprint:
+            return False
+        _ticket_assistant_approvals.pop(normalized, None)
+        return True
 
 
 def _adf_to_text(node: Any) -> str:
@@ -685,6 +724,23 @@ async def ticket_assistant(payload: TicketAssistantRequest) -> TicketAssistantRe
     interpretation = routed.get("interpretation") or ""
 
     if intent == "create_linked_software_tickets":
+        if payload.dry_run:
+            approval_token, approval_ttl_seconds = await _mint_ticket_assistant_approval_token(intent=intent, text=text)
+        else:
+            approved = await _consume_ticket_assistant_approval_token(
+                token=payload.approval_token,
+                intent=intent,
+                text=text,
+            )
+            if not approved:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Creation requires an approval token from a fresh dry run. "
+                        "Run dry_run=true first, then submit dry_run=false with approval_token."
+                    ),
+                )
+
         create_block = routed.get("create") or {}
         implementations_raw = create_block.get("implementations")
         implementations: List[ImplementationTicketDraft] = []
@@ -716,11 +772,16 @@ async def ticket_assistant(payload: TicketAssistantRequest) -> TicketAssistantRe
             dry_run=payload.dry_run,
         )
         create_result = await create_linked_software_tickets(create_request)
+        response_data = _model_to_dict(create_result)
+        if payload.dry_run:
+            response_data["approval_token"] = approval_token
+            response_data["approval_ttl_seconds"] = approval_ttl_seconds
+            response_data["approval_required"] = True
         return TicketAssistantResponse(
             intent=intent,
             interpretation=interpretation,
             message="Created linked software tickets" if not payload.dry_run else "Dry run plan generated",
-            data=_model_to_dict(create_result),
+            data=response_data,
         )
 
     search_question = str((routed.get("search") or {}).get("question") or text).strip() or text

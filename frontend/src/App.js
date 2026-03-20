@@ -788,10 +788,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
       setErrorMessage('No pending create request found.');
       return;
     }
+    const approvalToken = String(ticketQuestionResult?.data?.approval_token || '').trim();
+    if (!approvalToken) {
+      setErrorMessage('Approval token missing. Run Ask again to generate a fresh dry run before creating.');
+      return;
+    }
     setTicketCreateRunning(true);
     setErrorMessage('');
     try {
-      const data = await postJson('ticket-assistant', { text, limit: 40, dry_run: false });
+      const data = await postJson('ticket-assistant', { text, limit: 40, dry_run: false, approval_token: approvalToken });
       setTicketQuestionResult(data ?? null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ticket creation failed.';
@@ -799,7 +804,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     } finally {
       setTicketCreateRunning(false);
     }
-  }, [postJson, ticketAssistantLastText]);
+  }, [postJson, ticketAssistantLastText, ticketQuestionResult]);
 
   const handleCancelCreateTickets = useCallback(() => {
     setTicketQuestionResult((prev) => {
