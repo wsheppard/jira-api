@@ -117,6 +117,12 @@ _github_pr_detail_cache: Dict[Tuple[str, str, int], Tuple[float, Dict[str, str] 
 _github_pr_detail_cache_lock = asyncio.Lock()
 _github_pr_commits_cache: Dict[Tuple[str, str, int], Tuple[float, List[Dict[str, str]]]] = {}
 _github_pr_commits_cache_lock = asyncio.Lock()
+STAGING_TICKETS_CACHE_TTL_SECONDS = int(os.getenv("STAGING_TICKETS_CACHE_TTL_SECONDS", "120"))
+_staging_tickets_cache: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+_staging_tickets_cache_lock = asyncio.Lock()
+TICKET_SUMMARY_CACHE_TTL_SECONDS = int(os.getenv("TICKET_SUMMARY_CACHE_TTL_SECONDS", "21600"))
+_ticket_summary_cache: Dict[Tuple[str, str, str, str], Tuple[float, str]] = {}
+_ticket_summary_cache_lock = asyncio.Lock()
 TICKET_ASSISTANT_APPROVAL_TTL_SECONDS = int(os.getenv("TICKET_ASSISTANT_APPROVAL_TTL_SECONDS", "1800"))
 _ticket_assistant_approvals: Dict[str, Tuple[float, str, str]] = {}
 _ticket_assistant_approvals_lock = asyncio.Lock()
@@ -250,6 +256,53 @@ def _latest_comment(issue_fields: Dict[str, Any]) -> Dict[str, Any] | None:
         "body": body_text,
     }
 
+
+async def _generate_ticket_audience_summary(
+    ticket_key: str,
+    updated: str,
+    summary: str,
+    status: str,
+    description: str,
+    latest_comment: str,
+) -> str:
+    provider, _, model, _ = _provider_config()
+    cache_key = (ticket_key.upper(), updated or "", provider, model)
+    if TICKET_SUMMARY_CACHE_TTL_SECONDS > 0:
+        now = time.monotonic()
+        async with _ticket_summary_cache_lock:
+            cached = _ticket_summary_cache.get(cache_key)
+            if cached:
+                cached_at, cached_summary = cached
+                if now - cached_at < TICKET_SUMMARY_CACHE_TTL_SECONDS:
+                    return cached_summary
+                _ticket_summary_cache.pop(cache_key, None)
+
+    system_prompt = (
+        "You summarize Jira tickets for a non-technical audience. "
+        "Return strict JSON with one key: summary. "
+        "The summary must be plain text, one paragraph, no markdown. "
+        "Do not add ellipses unless they appear in source text. "
+        "Include current status and the latest meaningful progress/risk from the latest comment when present. "
+        "Do not invent facts."
+    )
+    user_prompt = (
+        f"Ticket: {ticket_key}\n"
+        f"Status: {status or 'Unknown'}\n"
+        f"Title: {summary or ''}\n"
+        f"Description: {description or ''}\n"
+        f"Latest comment: {latest_comment or ''}\n"
+    )
+    parsed = await _call_llm_json(system_prompt, user_prompt)
+    candidate = str(parsed.get("summary") or "").strip()
+    if not candidate:
+        raise HTTPException(status_code=502, detail=f"LLM summary missing for ticket {ticket_key}")
+    compact = " ".join(candidate.split())
+
+    if TICKET_SUMMARY_CACHE_TTL_SECONDS > 0:
+        async with _ticket_summary_cache_lock:
+            _ticket_summary_cache[cache_key] = (time.monotonic(), compact)
+    return compact
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -261,8 +314,12 @@ app = FastAPI(title="Jira / GitHub Bridge")
 # Add CORS middleware to allow requests from the frontend service
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://jira.dev.jjrsoftware.co.uk",
+        "https://jira.api.jjrsoftware.co.uk",
+        "http://localhost:3000",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1120,13 +1177,26 @@ async def github_pr_queue(
     page = 1
     open_prs: List[Dict[str, Any]] = []
     pr_mergeability: Dict[int, str] = {}
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(timeout=20.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         while True:
-            resp = await client.get(
-                pulls_url,
-                headers=headers,
-                params={"state": "open", "base": base, "sort": "updated", "direction": "desc", "per_page": 100, "page": page},
-            )
+            try:
+                resp = await client.get(
+                    pulls_url,
+                    headers=headers,
+                    params={
+                        "state": "open",
+                        "base": base,
+                        "sort": "updated",
+                        "direction": "desc",
+                        "per_page": 100,
+                        "page": page,
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                raise HTTPException(status_code=504, detail=f"GitHub API timeout while listing PRs: {exc!s}") from exc
+            except httpx.RequestError as exc:
+                raise HTTPException(status_code=502, detail=f"GitHub API request error while listing PRs: {exc!s}") from exc
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
             rows = resp.json() or []
@@ -1137,7 +1207,18 @@ async def github_pr_queue(
 
         async def fetch_mergeable_state(pr_number: int) -> tuple[int, str]:
             detail_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
-            detail_resp = await client.get(detail_url, headers=headers)
+            try:
+                detail_resp = await client.get(detail_url, headers=headers)
+            except httpx.TimeoutException as exc:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"GitHub API timeout while fetching PR #{pr_number} mergeability: {exc!s}",
+                ) from exc
+            except httpx.RequestError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"GitHub API request error while fetching PR #{pr_number} mergeability: {exc!s}",
+                ) from exc
             if detail_resp.status_code != 200:
                 raise HTTPException(status_code=detail_resp.status_code, detail=detail_resp.text)
             detail = detail_resp.json() or {}
@@ -1694,6 +1775,17 @@ def _strip_v_prefix(version_name: str) -> str:
 @app.get("/staging-tickets")
 async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[str, Any]:
     """Return staging tickets for a release version; version=next resolves the next unreleased Jira version."""
+    cache_key = (project.upper(), version.strip().lower())
+    if STAGING_TICKETS_CACHE_TTL_SECONDS > 0:
+        now = time.monotonic()
+        async with _staging_tickets_cache_lock:
+            cached = _staging_tickets_cache.get(cache_key)
+            if cached:
+                cached_at, cached_payload = cached
+                if now - cached_at < STAGING_TICKETS_CACHE_TTL_SECONDS:
+                    return copy.deepcopy(cached_payload)
+                _staging_tickets_cache.pop(cache_key, None)
+
     cfg = next((item for item in configs if item.get("name") == "palliativa"), None)
     if not cfg:
         raise RuntimeError("Palliativa Jira config not found")
@@ -1779,7 +1871,7 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         resolved_version = computed_next_version
 
     jql = f'project = "{project}" AND fixVersion = "{resolved_version}" ORDER BY created DESC'
-    fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated"]
+    fields = ["summary", "status", "labels", "issuetype", "fixVersions", "updated", "description", "comment"]
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             search_url,
@@ -1791,9 +1883,14 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
     release_parent: Dict[str, Any] | None = None
+    all_ticket_rows: List[Dict[str, Any]] = []
     results: List[Dict[str, Any]] = []
     for issue in resp.json().get("issues", []):
         fields_data = issue.get("fields", {}) or {}
+        latest_comment = _latest_comment(fields_data) or {}
+        description_text = _adf_to_text(fields_data.get("description")).strip()
+        if len(description_text) > 600:
+            description_text = description_text[:597] + "..."
         ticket_data = {
             "ticket": issue.get("key"),
             "title": fields_data.get("summary") or "",
@@ -1802,12 +1899,17 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
             "labels": fields_data.get("labels") or [],
             "fixVersions": [(item.get("name") or "") for item in (fields_data.get("fixVersions") or []) if item],
             "updated": fields_data.get("updated"),
+            "descriptionText": description_text,
+            "latestComment": latest_comment,
+            "audienceSummary": "",
             "link": f"{base_url}/browse/{issue.get('key')}",
         }
         if ("release-ticket" in ticket_data["labels"] or "release-train" in ticket_data["labels"]) and release_parent is None:
             release_parent = ticket_data
+            all_ticket_rows.append(ticket_data)
         else:
             results.append(ticket_data)
+            all_ticket_rows.append(ticket_data)
     if release_parent is None:
         release_parent = next(
             (
@@ -1820,7 +1922,20 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         if release_parent:
             results = [item for item in results if item.get("ticket") != release_parent.get("ticket")]
 
-    return {
+    async def summarize_ticket_row(ticket_row: Dict[str, Any]) -> None:
+        ticket_row["audienceSummary"] = await _generate_ticket_audience_summary(
+            ticket_key=str(ticket_row.get("ticket") or ""),
+            updated=str(ticket_row.get("updated") or ""),
+            summary=str(ticket_row.get("title") or ""),
+            status=str(ticket_row.get("statusName") or ""),
+            description=str(ticket_row.get("descriptionText") or ""),
+            latest_comment=str((ticket_row.get("latestComment") or {}).get("body") or ""),
+        )
+
+    if all_ticket_rows:
+        await asyncio.gather(*(summarize_ticket_row(ticket_row) for ticket_row in all_ticket_rows))
+
+    payload = {
         "project": project,
         "requested_version": version,
         "resolved_version": resolved_version,
@@ -1829,6 +1944,10 @@ async def staging_tickets(project: str = "AP", version: str = "next") -> Dict[st
         "release_parent": release_parent,
         "tickets": results,
     }
+    if STAGING_TICKETS_CACHE_TTL_SECONDS > 0:
+        async with _staging_tickets_cache_lock:
+            _staging_tickets_cache[cache_key] = (time.monotonic(), copy.deepcopy(payload))
+    return payload
 
 
 @app.post("/staging-backfill-fix-version")

@@ -594,6 +594,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
         labels: Array.isArray(ticket.labels) ? ticket.labels : [],
         fixVersions,
         inRelease,
+        descriptionText: ticket.descriptionText || '',
+        latestComment: (ticket.latestComment && typeof ticket.latestComment === 'object') ? ticket.latestComment : null,
+        audienceSummary: ticket.audienceSummary || '',
       });
     };
     if (stagingReleaseParent) {
@@ -644,6 +647,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const openPrsForTicket = githubPrQueue.filter((pr) => (
         Array.isArray(pr?.tickets) && pr.tickets.some((ticket) => (ticket?.key || '').toUpperCase() === key)
       ));
+      const conflictPrs = openPrsForTicket.filter((pr) => pr?.has_merge_conflicts);
       const mergeReadyPrs = openPrsForTicket.filter((pr) => !pr?.draft && !pr?.has_merge_conflicts);
       const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
       const branchFixVersions = branchData?.fixVersions || [];
@@ -656,23 +660,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
       let mergedWhere = '';
       let mergedWhereDetail = '';
-      let mergeStatus = '';
       if (inBranch) {
         mergedWhere = compareToRef ? `Seen in ${compareToRef}` : 'Seen in selected compare head';
         mergedWhereDetail = compareFromRef && compareToRef ? `${compareFromRef} -> ${compareToRef}` : '';
       } else if (inRelease) {
         mergedWhere = resolved ? `In Jira Fix Version ${resolved}` : 'In Jira release scope';
-      }
-      if (!inBranch) {
-        if (openPrsForTicket.some((pr) => pr?.has_merge_conflicts)) {
-          mergeStatus = 'Open PR has merge conflicts';
-        } else if (mergeReadyPrs.length === 0 && openPrsForTicket.length > 0) {
-          mergeStatus = 'Open PR exists but is draft';
-        } else if (openPrsForTicket.length === 0) {
-          mergeStatus = 'No open PR to codex/integration';
-        } else if (mergeReadyPrs.length > 1) {
-          mergeStatus = `Multiple merge-ready PRs (${mergeReadyPrs.length})`;
-        }
       }
       return {
         key,
@@ -689,11 +681,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
         mergedWhere,
         mergedWhereDetail,
         canMergePr,
-        mergeStatus,
         openPrCount: openPrsForTicket.length,
         mergeReadyPrCount: mergeReadyPrs.length,
+        conflictPrCount: conflictPrs.length,
         mergedCodexIntegrationTags: sortCodexIntegrationTags(Array.from(ticketCodexTagMap.get(key) || [])),
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
+        descriptionText: releaseData?.descriptionText || '',
+        latestComment: releaseData?.latestComment || null,
+        audienceSummary: releaseData?.audienceSummary || '',
       };
     }).filter((item) => !item.isReleaseParent).sort((a, b) => {
       if (a.isReleaseParent && !b.isReleaseParent) return -1;
@@ -843,7 +838,212 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const commitGroupByKey = new Map(
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
-  const noJiraGroup = commitGroups.find((group) => group.key === 'NO-JIRA') || null;
+  const releaseReconciliation = buildReleaseReconciliation();
+  const mergedReleaseItems = releaseReconciliation.filter((item) => item.isMerged);
+  const nonMergedReleaseItems = releaseReconciliation.filter((item) => !item.isMerged);
+
+  const renderStagingJiraCard = (item) => {
+    const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
+    const hasCodeEvidence = item.isMerged || commitsForItem.length > 0 || item.openPrCount > 0;
+    const noCode = !hasCodeEvidence;
+    const hasMultipleReadyPrs = !item.isMerged && item.mergeReadyPrCount > 1;
+    const hasDraftOnlyPrs = !item.isMerged
+      && item.openPrCount > 0
+      && item.mergeReadyPrCount === 0
+      && item.conflictPrCount === 0;
+
+    return (
+      <div
+        className={`card h-100 staging-card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
+      >
+        <div className="card-header staging-status-header">
+          <div className="d-flex align-items-start justify-content-between gap-2">
+            <div className="d-flex align-items-center gap-2">
+              {item.link ? (
+                <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                  {item.key}
+                </a>
+              ) : (
+                <span className="fw-semibold">{item.key}</span>
+              )}
+              {!item.inBranch && item.canMergePr && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-success"
+                  disabled={mergeInProgressByTicket[item.key] === true}
+                  onClick={() => handleMergeTicketPr(item.key)}
+                >
+                  {mergeInProgressByTicket[item.key] ? 'Merging PR...' : 'Merge PR'}
+                </button>
+              )}
+            </div>
+            <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
+              {item.status && (
+                <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                  {item.status}
+                </span>
+              )}
+              {item.isMerged && <span className="badge text-bg-success">MERGED</span>}
+              {!item.isMerged && item.canMergePr && <span className="badge text-bg-warning">PR-READY</span>}
+              {!item.isMerged && item.conflictPrCount > 0 && <span className="badge text-bg-danger">PR-CONFLICT</span>}
+              {hasDraftOnlyPrs && <span className="badge text-bg-secondary">PR-DRAFT</span>}
+              {hasMultipleReadyPrs && (
+                <span className="badge text-bg-warning">{`PR-AMBIGUOUS (${item.mergeReadyPrCount})`}</span>
+              )}
+              {noCode && <span className="badge text-bg-dark">NO CODE</span>}
+              {Array.isArray(item.ticketFixVersions) && item.ticketFixVersions.length > 0 && (
+                <span className="badge text-bg-info">
+                  {`Fix Version: ${item.ticketFixVersions.join(', ')}`}
+                </span>
+              )}
+              {item.isOutsideSelectedRelease && (
+                <span className="badge text-bg-warning">
+                  {`Outside Selected Release (${stagingResolvedVersion})`}
+                </span>
+              )}
+              {item.isMerged && item.mergedWhere && (
+                <span className="badge text-bg-light border">{item.mergedWhere}</span>
+              )}
+              {item.isMerged && item.mergedCodexIntegrationTags.length > 0 && (
+                <span className="badge text-bg-light border">
+                  {`Reachable Tag: ${item.mergedCodexIntegrationTags[item.mergedCodexIntegrationTags.length - 1]}`}
+                </span>
+              )}
+              {item.inBranch && !item.hasFixVersion && (
+                <span className="badge text-bg-warning">Missing Fix Version</span>
+              )}
+              {Array.isArray(item.labels) && item.labels.map((label) => (
+                <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
+              ))}
+            </div>
+          </div>
+          <div className="text-muted mt-2">
+            {item.title}
+          </div>
+          {item.audienceSummary && (
+            <div className="small mt-2 staging-audience-summary">
+              {item.audienceSummary}
+            </div>
+          )}
+          {mergeMessageByTicket[item.key] && (
+            <div className={`small mt-2 ${mergeMessageByTicket[item.key].startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
+              {mergeMessageByTicket[item.key]}
+            </div>
+          )}
+          {item.isMerged && item.mergedWhereDetail && (
+            <div className="text-muted small mt-1">
+              Range: {item.mergedWhereDetail}
+            </div>
+          )}
+          {item.isMerged && (
+            <div className="small mt-2">
+              <span className="text-muted me-1">Codex-integration tag history:</span>
+              {item.mergedCodexIntegrationTags.length > 0 ? (
+                item.mergedCodexIntegrationTags.map((tag) => (
+                  <span key={`${item.key}-codex-tag-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
+                ))
+              ) : (
+                <span className="text-muted">No codex-integration tag on commits in this range.</span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="card-body">
+          {commitsForItem.length === 0 ? (
+            <div className="text-muted small">
+              {noCode
+                ? 'No commits and no open PR for this ticket.'
+                : !item.isMerged && item.inRelease
+                  ? 'In Jira Fix Version, but no commits found in this selected compare range.'
+                  : item.isMerged
+                    ? 'Merged, but no commits found in this selected compare range.'
+                    : 'No commits found in this selected compare range.'}
+            </div>
+          ) : (
+            <ul className="list-group list-group-flush">
+              {commitsForItem.map((commit) => {
+                const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
+                return (
+                  <li
+                    key={`${item.key}-${commit.sha}`}
+                    className={`list-group-item px-0 ${commitHasReadyForReleaseJira(commit) ? 'staging-commit-ready-item' : ''}`}
+                  >
+                    <div className="commit-tree">
+                      <div className="commit-parent-row">
+                        <div className={`connector-lane ${hasNested ? 'has-children' : ''}`} aria-hidden="true">
+                          <span className="connector-dot"></span>
+                        </div>
+                        <div className="commit-node">
+                          <div className="commit-hash-message">
+                            <span className="commit-hash">
+                              {commit.link ? (
+                                <a href={commit.link} target="_blank" rel="noopener noreferrer">
+                                  {commit.sha?.slice(0, 7) ?? 'unknown'}
+                                </a>
+                              ) : (
+                                commit.sha?.slice(0, 7) ?? 'unknown'
+                              )}
+                            </span>
+                            <span className="commit-message-text">{commit.message || 'No message'}</span>
+                          </div>
+                          <div className="commit-meta-row">
+                            {Array.isArray(commit.tags) && commit.tags.length > 0 && (
+                              <span>
+                                {commit.tags.map((tag) => (
+                                  <span key={tag} className="badge text-bg-secondary me-1">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-muted small">
+                            {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
+                          </div>
+                          {renderPrLinks(commit.prs) && (
+                            <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
+                          )}
+                        </div>
+                      </div>
+                      {hasNested && (
+                        <ul className="list-group list-group-flush mt-2 nested-commit-list">
+                          {commit.nested_commits.map((nested, nestedIndex) => (
+                            <li
+                              key={`${commit.sha}-${nested.sha}`}
+                              className={`list-group-item nested-commit-item ${nestedIndex === commit.nested_commits.length - 1 ? 'is-last' : ''}`}
+                            >
+                              <div className="connector-lane nested" aria-hidden="true"></div>
+                              <div className="commit-node">
+                                <div className="commit-hash-message">
+                                  <span className="commit-hash">
+                                    {nested.link ? (
+                                      <a href={nested.link} target="_blank" rel="noopener noreferrer">
+                                        {nested.sha?.slice(0, 7) ?? 'unknown'}
+                                      </a>
+                                    ) : (
+                                      nested.sha?.slice(0, 7) ?? 'unknown'
+                                    )}
+                                  </span>
+                                  <span className="commit-message-text">{nested.message || 'No message'}</span>
+                                </div>
+                                <div className="text-muted small">
+                                  {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="container-fluid p-4">
@@ -1139,236 +1339,28 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
                 {stagingActiveTab === 'jiraCards' && (
                   <div className="row g-3 mt-1">
-                  {noJiraGroup && noJiraGroup.commits.length > 0 && (
-                    <div className="col-12 col-xl-6">
-                      <div className="card h-100 staging-card staging-status-warning">
-                        <div className="card-header staging-status-header d-flex flex-wrap align-items-center gap-2">
-                          <span className="fw-semibold">Commits Without Jira</span>
-                          <span className="badge text-bg-warning">No Jira</span>
-                          <span className="badge text-bg-light border">{noJiraGroup.commits.length} commits</span>
-                        </div>
-                        <div className="card-body">
-                          <ul className="list-group list-group-flush">
-                            {noJiraGroup.commits.map((commit) => (
-                              <li key={`no-jira-${commit.sha}`} className="list-group-item px-0">
-                                <div className="commit-hash-message">
-                                  <span className="commit-hash">
-                                    {commit.link ? (
-                                      <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                                        {commit.sha?.slice(0, 7) ?? 'unknown'}
-                                      </a>
-                                    ) : (
-                                      commit.sha?.slice(0, 7) ?? 'unknown'
-                                    )}
-                                  </span>
-                                  <span className="commit-message-text">{commit.message || 'No message'}</span>
-                                </div>
-                                <div className="text-muted small">
-                                  {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
-                                </div>
-                                {renderPrLinks(commit.prs) && (
-                                  <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                    <div className="col-12">
+                      <div className="d-flex align-items-center gap-2 mt-1 mb-1">
+                        <span className="fw-semibold">Not Merged</span>
+                        <span className="badge text-bg-secondary">{nonMergedReleaseItems.length}</span>
                       </div>
                     </div>
-                  )}
-                  {buildReleaseReconciliation().map((item) => (
-                    <div key={item.key} className="col-12 col-xl-6">
-                      {(() => {
-                        const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
-                        return (
-                      <div
-                        className={`card h-100 staging-card ${isReadyForRelease(item.status) ? 'staging-status-ready' : 'staging-status-not-ready'}`}
-                      >
-                      <div className="card-header staging-status-header">
-                        <div className="d-flex align-items-start justify-content-between gap-2">
-                          <div className="d-flex align-items-center gap-2">
-                            {item.link ? (
-                              <a href={item.link} target="_blank" rel="noopener noreferrer" className="fw-semibold">
-                                {item.key}
-                              </a>
-                            ) : (
-                              <span className="fw-semibold">{item.key}</span>
-                            )}
-                            {!item.inBranch && item.canMergePr && (
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline-success"
-                                disabled={mergeInProgressByTicket[item.key] === true}
-                                onClick={() => handleMergeTicketPr(item.key)}
-                              >
-                                {mergeInProgressByTicket[item.key] ? 'Merging PR...' : 'Merge PR'}
-                              </button>
-                            )}
-                          </div>
-                          <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
-                            {item.status && (
-                              <span className={`badge ${isReadyForRelease(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
-                                {item.status}
-                              </span>
-                            )}
-                            {item.isMerged ? (
-                              <span className="badge text-bg-success">MERGED</span>
-                            ) : (
-                              <span className="badge text-bg-danger">NOT MERGED</span>
-                            )}
-                            {Array.isArray(item.ticketFixVersions) && item.ticketFixVersions.length > 0 && (
-                              <span className="badge text-bg-info">
-                                {`Fix Version: ${item.ticketFixVersions.join(', ')}`}
-                              </span>
-                            )}
-                            {item.isOutsideSelectedRelease && (
-                              <span className="badge text-bg-warning">
-                                {`Outside Selected Release (${stagingResolvedVersion})`}
-                              </span>
-                            )}
-                            {item.isMerged && item.mergedWhere && (
-                              <span className="badge text-bg-light border">{item.mergedWhere}</span>
-                            )}
-                            {item.isMerged && item.mergedCodexIntegrationTags.length > 0 && (
-                              <span className="badge text-bg-light border">
-                                {`Reachable Tag: ${item.mergedCodexIntegrationTags[item.mergedCodexIntegrationTags.length - 1]}`}
-                              </span>
-                            )}
-                            {item.inBranch && !item.hasFixVersion && (
-                              <span className="badge text-bg-warning">Missing Fix Version</span>
-                            )}
-                            {Array.isArray(item.labels) && item.labels.map((label) => (
-                              <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="text-muted mt-2">
-                          {item.title}
-                        </div>
-                        {mergeMessageByTicket[item.key] && (
-                          <div className={`small mt-2 ${mergeMessageByTicket[item.key].startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
-                            {mergeMessageByTicket[item.key]}
-                          </div>
-                        )}
-                        {!item.inBranch && !item.canMergePr && item.mergeStatus && (
-                          <div className="small mt-2 text-muted">
-                            {item.mergeStatus}
-                          </div>
-                        )}
-                        {item.isMerged && item.mergedWhereDetail && (
-                          <div className="text-muted small mt-1">
-                            Range: {item.mergedWhereDetail}
-                          </div>
-                        )}
-                        {item.isMerged && (
-                          <div className="small mt-2">
-                            <span className="text-muted me-1">Codex-integration tag history:</span>
-                            {item.mergedCodexIntegrationTags.length > 0 ? (
-                              item.mergedCodexIntegrationTags.map((tag) => (
-                                <span key={`${item.key}-codex-tag-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
-                              ))
-                            ) : (
-                              <span className="text-muted">No codex-integration tag on commits in this range.</span>
-                            )}
-                          </div>
-                        )}
+                    {nonMergedReleaseItems.map((item) => (
+                      <div key={`not-merged-${item.key}`} className="col-12 col-xl-6">
+                        {renderStagingJiraCard(item)}
                       </div>
-                      <div className="card-body">
-                        {commitsForItem.length === 0 ? (
-                          <div className="text-muted small">
-                            {!item.isMerged && item.inRelease
-                              ? 'In Jira Fix Version, but no GitHub commits/PRs found in this selected compare range.'
-                              : item.isMerged
-                                ? 'Merged, but no commits/PRs in this selected compare range.'
-                              : 'No commits / PRs yet.'}
-                          </div>
-                        ) : (
-                          <ul className="list-group list-group-flush">
-                            {commitsForItem.map((commit) => {
-                              const hasNested = Array.isArray(commit.nested_commits) && commit.nested_commits.length > 0;
-                              return (
-                                <li
-                                  key={`${item.key}-${commit.sha}`}
-                                  className={`list-group-item px-0 ${commitHasReadyForReleaseJira(commit) ? 'staging-commit-ready-item' : ''}`}
-                                >
-                                  <div className="commit-tree">
-                                    <div className="commit-parent-row">
-                                      <div className={`connector-lane ${hasNested ? 'has-children' : ''}`} aria-hidden="true">
-                                        <span className="connector-dot"></span>
-                                      </div>
-                                      <div className="commit-node">
-                                        <div className="commit-hash-message">
-                                          <span className="commit-hash">
-                                            {commit.link ? (
-                                              <a href={commit.link} target="_blank" rel="noopener noreferrer">
-                                                {commit.sha?.slice(0, 7) ?? 'unknown'}
-                                              </a>
-                                            ) : (
-                                              commit.sha?.slice(0, 7) ?? 'unknown'
-                                            )}
-                                          </span>
-                                          <span className="commit-message-text">{commit.message || 'No message'}</span>
-                                        </div>
-                                        <div className="commit-meta-row">
-                                          {Array.isArray(commit.tags) && commit.tags.length > 0 && (
-                                            <span>
-                                              {commit.tags.map((tag) => (
-                                                <span key={tag} className="badge text-bg-secondary me-1">
-                                                  {tag}
-                                                </span>
-                                              ))}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="text-muted small">
-                                          {commit.author || 'Unknown'} · {commit.date ? new Date(commit.date).toLocaleString() : 'Unknown'}
-                                        </div>
-                                        {renderPrLinks(commit.prs) && (
-                                          <div className="small mt-1">PRs: {renderPrLinks(commit.prs)}</div>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {hasNested && (
-                                      <ul className="list-group list-group-flush mt-2 nested-commit-list">
-                                        {commit.nested_commits.map((nested, nestedIndex) => (
-                                          <li
-                                            key={`${commit.sha}-${nested.sha}`}
-                                            className={`list-group-item nested-commit-item ${nestedIndex === commit.nested_commits.length - 1 ? 'is-last' : ''}`}
-                                          >
-                                            <div className="connector-lane nested" aria-hidden="true"></div>
-                                            <div className="commit-node">
-                                              <div className="commit-hash-message">
-                                                <span className="commit-hash">
-                                                  {nested.link ? (
-                                                    <a href={nested.link} target="_blank" rel="noopener noreferrer">
-                                                      {nested.sha?.slice(0, 7) ?? 'unknown'}
-                                                    </a>
-                                                  ) : (
-                                                    nested.sha?.slice(0, 7) ?? 'unknown'
-                                                  )}
-                                                </span>
-                                                <span className="commit-message-text">{nested.message || 'No message'}</span>
-                                              </div>
-                                              <div className="text-muted small">
-                                                {nested.author || 'Unknown'} · {nested.date ? new Date(nested.date).toLocaleString() : 'Unknown'}
-                                              </div>
-                                            </div>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    )}
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
+                    ))}
+                    <div className="col-12 mt-2">
+                      <div className="d-flex align-items-center gap-2 mb-1">
+                        <span className="fw-semibold">Merged</span>
+                        <span className="badge text-bg-success">{mergedReleaseItems.length}</span>
                       </div>
-                      </div>
-                        );
-                      })()}
                     </div>
-                  ))}
+                    {mergedReleaseItems.map((item) => (
+                      <div key={`merged-${item.key}`} className="col-12 col-xl-6">
+                        {renderStagingJiraCard(item)}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
