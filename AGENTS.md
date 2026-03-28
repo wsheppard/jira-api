@@ -22,7 +22,6 @@ This file contains instructions for the coding agent on how to work within this 
 ## Deployment
 
 - Use Docker Compose for deployment: `docker-compose up -d`
-- Ensure a Docker network named `docker_static` exists.
 - Frontend is served by Caddy (see `Dockerfile.frontend` and `Caddyfile.frontend`); the FastAPI app no longer serves static files directly.
 - Use the modern Docker Compose CLI with this repo's `compose.yml`.
 - Default command: `docker compose up -d --build`

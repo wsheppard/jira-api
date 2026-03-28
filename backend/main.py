@@ -1348,6 +1348,16 @@ async def recently_updated():
     return tickets
 
 
+@app.get("/recently-closed")
+async def recently_closed():
+    """Done-category tickets resolved in the last 72 hours."""
+    fields = ["summary", "project", "assignee", "updated", "duedate", "key", "status", "priority", "labels", "issuetype", "comment"]
+    jql = 'statusCategory = Done AND resolutiondate >= -72h'
+    tickets = await _search_jira(jql, fields)
+    tickets.sort(key=lambda i: i.get("updated") or "", reverse=True)
+    return tickets
+
+
 @app.get("/codex-enrich")
 async def codex_enrich():
     """Tickets tagged for Codex enrichment across Jira instances."""

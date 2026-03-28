@@ -52,12 +52,6 @@ open http://localhost:8000
 
 ## Docker Compose Deployment
 
-Ensure you have an external Docker network named `docker_static`:
-
-```bash
-docker network create docker_static
-```
-
 Start the service via Docker Compose (this repo uses `compose.yml`, so use the modern `docker compose` CLI):
 
 ```bash
