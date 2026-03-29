@@ -1272,9 +1272,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                         )}
                                       </span>
                                       <span className="commit-message-text">{row.message || 'No message'}</span>
-                                      {row.is_merge_commit && (
-                                        <span className="badge text-bg-info ms-2">MERGE</span>
-                                      )}
                                     </div>
                                     <div className="text-muted small">
                                       {row.author || 'Unknown'} · {row.date ? new Date(row.date).toLocaleString() : 'Unknown'}
