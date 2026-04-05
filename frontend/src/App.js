@@ -119,8 +119,8 @@ function App() {
   const [githubRefreshInProgress, setGithubRefreshInProgress] = useState(false);
   const [githubPrQueue, setGithubPrQueue] = useState([]);
   const [prQueueSearch, setPrQueueSearch] = useState('');
-  const [mergeInProgressByTicket, setMergeInProgressByTicket] = useState({});
-  const [mergeMessageByTicket, setMergeMessageByTicket] = useState({});
+  const [mergeInProgressByPr, setMergeInProgressByPr] = useState({});
+  const [mergeMessageByPr, setMergeMessageByPr] = useState({});
   const [backfillInProgress, setBackfillInProgress] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState('');
   const [ticketQuestionInput, setTicketQuestionInput] = useState('');
@@ -652,6 +652,18 @@ const [nextPollIn, setNextPollIn] = useState(30);
       ));
       const conflictPrs = openPrsForTicket.filter((pr) => pr?.has_merge_conflicts);
       const mergeReadyPrs = openPrsForTicket.filter((pr) => !pr?.draft && !pr?.has_merge_conflicts);
+      const associatedPrs = openPrsForTicket.map((pr) => ({
+        number: pr?.number,
+        title: pr?.title || '',
+        url: pr?.url || '',
+        head_ref: pr?.head_ref || '',
+        author: pr?.author || '',
+        draft: Boolean(pr?.draft),
+        mergeable_state: pr?.mergeable_state || '',
+        has_merge_conflicts: Boolean(pr?.has_merge_conflicts),
+        merge_warning: pr?.merge_warning || '',
+        updated_at: pr?.updated_at || '',
+      }));
       const labels = Array.from(new Set([...(releaseData?.labels || []), ...(branchData?.labels || [])]));
       const branchFixVersions = branchData?.fixVersions || [];
       const ticketFixVersions = Array.from(new Set([...(releaseData?.fixVersions || []), ...branchFixVersions]));
@@ -687,6 +699,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         openPrCount: openPrsForTicket.length,
         mergeReadyPrCount: mergeReadyPrs.length,
         conflictPrCount: conflictPrs.length,
+        associatedPrs,
         mergedCodexIntegrationTags: sortCodexIntegrationTags(Array.from(ticketCodexTagMap.get(key) || [])),
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
         descriptionText: releaseData?.descriptionText || '',
@@ -731,34 +744,35 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }
   }, [activeView, fetchViewData]);
 
-  const handleMergeTicketPr = useCallback(async (ticketKey) => {
-    if (!ticketKey) {
+  const handleMergeTicketPr = useCallback(async (ticketKey, prNumber) => {
+    if (!ticketKey || !prNumber) {
       return;
     }
     const confirmed = typeof window === 'undefined'
       ? true
-      : window.confirm(`Merge open PR for ${ticketKey} into codex/integration?`);
+      : window.confirm(`Merge PR #${prNumber} for ${ticketKey} into codex/integration?`);
     if (!confirmed) {
       return;
     }
-    setMergeInProgressByTicket((prev) => ({ ...prev, [ticketKey]: true }));
-    setMergeMessageByTicket((prev) => ({ ...prev, [ticketKey]: '' }));
+    const mergeKey = String(prNumber);
+    setMergeInProgressByPr((prev) => ({ ...prev, [mergeKey]: true }));
+    setMergeMessageByPr((prev) => ({ ...prev, [mergeKey]: '' }));
     try {
       const payload = await postJson(
-        `github-merge-ticket-pr?ticket=${encodeURIComponent(ticketKey)}&owner=palliativa&repo=monorepo&base=codex/integration`,
+        `github-merge-pr?pr_number=${encodeURIComponent(prNumber)}&owner=palliativa&repo=monorepo&base=codex/integration`,
       );
-      const prNumber = payload?.pr?.number;
+      const mergedPrNumber = payload?.pr?.number;
       const message = payload?.message || 'Merged successfully.';
-      setMergeMessageByTicket((prev) => ({
+      setMergeMessageByPr((prev) => ({
         ...prev,
-        [ticketKey]: prNumber ? `Merged PR #${prNumber}. ${message}` : message,
+        [mergeKey]: mergedPrNumber ? `Merged PR #${mergedPrNumber}. ${message}` : message,
       }));
       await fetchViewData(STAGING_VIEW_ID, { forceGithubRefresh: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'PR merge failed.';
-      setMergeMessageByTicket((prev) => ({ ...prev, [ticketKey]: `Merge failed: ${message}` }));
+      setMergeMessageByPr((prev) => ({ ...prev, [mergeKey]: `Merge failed: ${message}` }));
     } finally {
-      setMergeInProgressByTicket((prev) => ({ ...prev, [ticketKey]: false }));
+      setMergeInProgressByPr((prev) => ({ ...prev, [mergeKey]: false }));
     }
   }, [fetchViewData, postJson]);
 
@@ -849,7 +863,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
     const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
     const hasCodeEvidence = item.isMerged || commitsForItem.length > 0 || item.openPrCount > 0;
     const noCode = !hasCodeEvidence;
-    const hasMultipleReadyPrs = !item.isMerged && item.mergeReadyPrCount > 1;
     const hasDraftOnlyPrs = !item.isMerged
       && item.openPrCount > 0
       && item.mergeReadyPrCount === 0
@@ -869,16 +882,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
               ) : (
                 <span className="fw-semibold">{item.key}</span>
               )}
-              {!item.inBranch && item.canMergePr && (
-                <button
-                  type="button"
-                  className="btn btn-sm btn-outline-success"
-                  disabled={mergeInProgressByTicket[item.key] === true}
-                  onClick={() => handleMergeTicketPr(item.key)}
-                >
-                  {mergeInProgressByTicket[item.key] ? 'Merging PR...' : 'Merge PR'}
-                </button>
-              )}
             </div>
             <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
               {item.status && (
@@ -890,8 +893,8 @@ const [nextPollIn, setNextPollIn] = useState(30);
               {!item.isMerged && item.canMergePr && <span className="badge text-bg-warning">PR-READY</span>}
               {!item.isMerged && item.conflictPrCount > 0 && <span className="badge text-bg-danger">PR-CONFLICT</span>}
               {hasDraftOnlyPrs && <span className="badge text-bg-secondary">PR-DRAFT</span>}
-              {hasMultipleReadyPrs && (
-                <span className="badge text-bg-warning">{`PR-AMBIGUOUS (${item.mergeReadyPrCount})`}</span>
+              {!item.isMerged && item.openPrCount > 0 && (
+                <span className="badge text-bg-light border">{`PRs (${item.openPrCount})`}</span>
               )}
               {noCode && <span className="badge text-bg-dark">NO CODE</span>}
               {Array.isArray(item.ticketFixVersions) && item.ticketFixVersions.length > 0 && (
@@ -928,9 +931,59 @@ const [nextPollIn, setNextPollIn] = useState(30);
               {item.audienceSummary}
             </div>
           )}
-          {mergeMessageByTicket[item.key] && (
-            <div className={`small mt-2 ${mergeMessageByTicket[item.key].startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
-              {mergeMessageByTicket[item.key]}
+          {Array.isArray(item.associatedPrs) && item.associatedPrs.length > 0 && (
+            <div className="mt-3">
+              <div className="small text-muted mb-2">Associated PRs</div>
+              <div className="list-group list-group-flush">
+                {item.associatedPrs.map((pr) => {
+                  const prKey = String(pr.number || '');
+                  const mergeable = !pr.draft && !pr.has_merge_conflicts;
+                  const mergeMessage = mergeMessageByPr[prKey];
+                  return (
+                    <div
+                      key={`${item.key}-pr-${prKey}`}
+                      className="list-group-item px-0 d-flex justify-content-between align-items-start gap-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="d-flex align-items-center gap-2 flex-wrap">
+                          {pr.url ? (
+                            <a href={pr.url} target="_blank" rel="noopener noreferrer" className="fw-semibold">
+                              {`#${pr.number}`}
+                            </a>
+                          ) : (
+                            <span className="fw-semibold">{`#${pr.number}`}</span>
+                          )}
+                          {pr.draft && <span className="badge text-bg-secondary">draft</span>}
+                          {pr.has_merge_conflicts && <span className="badge text-bg-danger">conflict</span>}
+                          {mergeable && <span className="badge text-bg-success">mergeable</span>}
+                        </div>
+                        {pr.title && <div className="small text-muted text-truncate">{pr.title}</div>}
+                        <div className="small text-muted">
+                          {pr.head_ref || 'unknown branch'}
+                          {pr.author ? ` • ${pr.author}` : ''}
+                          {pr.mergeable_state ? ` • ${pr.mergeable_state}` : ''}
+                        </div>
+                        {pr.merge_warning && <div className="small text-danger">{pr.merge_warning}</div>}
+                      </div>
+                      <div className="text-end">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-success"
+                          disabled={!mergeable || mergeInProgressByPr[prKey] === true}
+                          onClick={() => handleMergeTicketPr(item.key, pr.number)}
+                        >
+                          {mergeInProgressByPr[prKey] ? `Merging #${pr.number}...` : `Merge PR #${pr.number}`}
+                        </button>
+                        {mergeMessage && (
+                          <div className={`small mt-2 ${mergeMessage.startsWith('Merge failed:') ? 'text-danger' : 'text-success'}`}>
+                            {mergeMessage}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
           {item.isMerged && item.mergedWhereDetail && (

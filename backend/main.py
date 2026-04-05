@@ -215,6 +215,37 @@ async def _consume_ticket_assistant_approval_token(token: str, intent: str, text
         return True
 
 
+async def _merge_github_pr(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    owner: str,
+    repo: str,
+    pr_number: int,
+    method: Literal["merge", "squash", "rebase"],
+) -> Dict[str, Any]:
+    detail_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+    detail_resp = await client.get(detail_url, headers=headers)
+    if detail_resp.status_code != 200:
+        raise HTTPException(status_code=detail_resp.status_code, detail=detail_resp.text)
+    pr = detail_resp.json() or {}
+
+    merge_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
+    merge_resp = await client.put(merge_url, headers=headers, json={"merge_method": method})
+    if merge_resp.status_code not in (200, 201):
+        raise HTTPException(status_code=merge_resp.status_code, detail=merge_resp.text)
+    merge_payload = merge_resp.json() or {}
+
+    return {
+        "number": pr_number,
+        "title": pr.get("title") or "",
+        "url": pr.get("html_url") or "",
+        "head": ((pr.get("head") or {}).get("ref") or ""),
+        "merged": bool(merge_payload.get("merged")),
+        "message": merge_payload.get("message") or "",
+        "sha": merge_payload.get("sha") or "",
+    }
+
+
 def _adf_to_text(node: Any) -> str:
     """Best-effort conversion of Atlassian Document Format to plain text."""
     if node is None:
@@ -1131,12 +1162,7 @@ async def github_merge_ticket_pr(
         pr_number = pr.get("number")
         if not isinstance(pr_number, int):
             raise HTTPException(status_code=500, detail="Matched PR did not include a valid PR number")
-
-        merge_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
-        merge_resp = await client.put(merge_url, headers=headers, json={"merge_method": method})
-        if merge_resp.status_code not in (200, 201):
-            raise HTTPException(status_code=merge_resp.status_code, detail=merge_resp.text)
-        merge_payload = merge_resp.json() or {}
+        merged_pr = await _merge_github_pr(client, headers, owner, repo, pr_number, method)
 
     if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
         async with _github_compare_cache_lock:
@@ -1150,15 +1176,40 @@ async def github_merge_ticket_pr(
         "repo": repo,
         "base": base,
         "method": method,
-        "pr": {
-            "number": pr_number,
-            "title": pr.get("title") or "",
-            "url": pr.get("html_url") or "",
-            "head": ((pr.get("head") or {}).get("ref") or ""),
-        },
-        "merged": bool(merge_payload.get("merged")),
-        "message": merge_payload.get("message") or "",
-        "sha": merge_payload.get("sha") or "",
+        "pr": merged_pr,
+    }
+
+
+@app.post("/github-merge-pr")
+async def github_merge_pr(
+    pr_number: int,
+    owner: str = "palliativa",
+    repo: str = "monorepo",
+    method: Literal["merge", "squash", "rebase"] = "merge",
+) -> Dict[str, Any]:
+    if pr_number <= 0:
+        raise HTTPException(status_code=400, detail=f"Invalid PR number '{pr_number}'")
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    async with httpx.AsyncClient() as client:
+        merged_pr = await _merge_github_pr(client, headers, owner, repo, pr_number, method)
+
+    if GITHUB_COMPARE_CACHE_TTL_SECONDS > 0:
+        async with _github_compare_cache_lock:
+            cache_keys = [key for key in _github_compare_cache.keys() if key[0] == owner and key[1] == repo]
+            for cache_key in cache_keys:
+                _github_compare_cache.pop(cache_key, None)
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "method": method,
+        "pr": merged_pr,
     }
 
 
