@@ -43,7 +43,7 @@ const VIEW_ORDER = [
   'codexIntegrationPrQueue',
   'ticketQuestion',
 ];
-const DEFAULT_VIEW = 'open';
+const DEFAULT_VIEW = STAGING_VIEW_ID;
 
 const pathForView = (viewId) => (viewId === DEFAULT_VIEW ? '/' : `/view/${viewId}`);
 const stagingVersionFromSearch = (search) => {
