@@ -1596,10 +1596,12 @@ async def github_branch_commits(
         for key in keys:
             entry = jira_lookup.get(key)
             if entry:
-                entries.append(entry)
+                entry_copy = dict(entry)
+                entry_copy["sourceKey"] = key
+                entries.append(entry_copy)
             else:
                 link = f"{jira_base_url}/browse/{key}" if jira_base_url else ""
-                entries.append({"key": key, "status": "", "link": link})
+                entries.append({"key": key, "sourceKey": key, "status": "", "link": link})
         return entries
 
     tags_by_commit: Dict[str, List[str]] = {}

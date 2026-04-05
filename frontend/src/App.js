@@ -1306,6 +1306,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                     {Array.isArray(row.jira) && row.jira.length > 0 ? (
                                       row.jira.map((jiraItem) => (
                                         <div key={`${row.sha}-jira-${jiraItem.key}`} className="mb-1">
+                                          {jiraItem.sourceKey && jiraItem.sourceKey !== jiraItem.key && (
+                                            <div className="text-muted small">
+                                              Moved from {jiraItem.sourceKey}
+                                            </div>
+                                          )}
                                           {jiraItem.link ? (
                                             <a href={jiraItem.link} target="_blank" rel="noopener noreferrer">
                                               {jiraItem.key}
