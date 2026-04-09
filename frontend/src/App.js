@@ -494,6 +494,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         return a.localeCompare(b);
       })
   );
+  const normalizeRegistryTag = (tag) => (typeof tag === 'string' ? tag.trim().replace(/\//g, '-') : '');
 
   const buildRangeTags = () => {
     const allTagRows = new Map();
@@ -864,6 +865,19 @@ const [nextPollIn, setNextPollIn] = useState(30);
   });
   const rangeTags = buildRangeTags();
   const commitTagTimeline = buildCommitTagTimeline();
+  const registryTagSet = new Set(
+    (Array.isArray(githubCompare?.registry_tags) ? githubCompare.registry_tags : [])
+      .map((tag) => normalizeRegistryTag(tag))
+      .filter(Boolean),
+  );
+  const buildTagRows = rangeTags.all.map((entry) => {
+    const registryTag = normalizeRegistryTag(entry.tag);
+    return {
+      gitTag: entry.tag,
+      registryTag,
+      present: registryTagSet.has(registryTag),
+    };
+  });
   const commitGroupByKey = new Map(
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
@@ -1269,10 +1283,35 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   Tags in selected hash range: {rangeTags.all.length}
                   {rangeTags.codex.length > 0 ? ` (codex-integration: ${rangeTags.codex.length})` : ''}
                 </div>
+                <div className="small text-muted mt-2">
+                  Docker registry builds: {buildTagRows.filter((row) => row.present).length}/{buildTagRows.length}
+                </div>
+                {githubCompare?.registry_tags_error && (
+                  <div className="small text-warning mt-1">
+                    {`Registry tag lookup unavailable: ${githubCompare.registry_tags_error}`}
+                  </div>
+                )}
                 {rangeTags.codex.length > 0 && (
                   <div className="mt-2 d-flex flex-wrap gap-1">
                     {rangeTags.codex.map((tag) => (
                       <span key={`range-codex-tag-${tag}`} className="badge staging-tag-badge">{tag}</span>
+                    ))}
+                  </div>
+                )}
+                {buildTagRows.length > 0 && (
+                  <div className="mt-2 d-flex flex-wrap gap-1">
+                    {buildTagRows.map((row) => (
+                      <span
+                        key={`registry-tag-${row.gitTag}`}
+                        className={`badge ${row.present ? 'staging-registry-tag-present' : 'staging-registry-tag-missing'}`}
+                        title={row.registryTag}
+                      >
+                        <span className="me-1">{row.gitTag}</span>
+                        {row.registryTag !== row.gitTag && (
+                          <span className="staging-registry-tag-target">{`→ ${row.registryTag}`}</span>
+                        )}
+                        <span className="ms-1">{row.present ? 'built' : 'missing'}</span>
+                      </span>
                     ))}
                   </div>
                 )}

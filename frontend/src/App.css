@@ -254,6 +254,25 @@
   font-weight: 500;
 }
 
+.staging-registry-tag-present {
+  background: #198754;
+  color: #fff;
+  border: 1px solid #198754;
+  font-weight: 600;
+}
+
+.staging-registry-tag-missing {
+  background: #6c757d;
+  color: #fff;
+  border: 1px solid #6c757d;
+  font-weight: 600;
+}
+
+.staging-registry-tag-target {
+  font-size: 0.8em;
+  opacity: 0.9;
+}
+
 .staging-commit-ready > td {
   background-color: #d1e7dd !important;
 }

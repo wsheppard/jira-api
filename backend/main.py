@@ -1532,6 +1532,43 @@ async def github_branch_commits(
                 page += 1
         return tag_rows
 
+    async def fetch_registry_tags(package_owner: str, package_name: str) -> tuple[List[str], str]:
+        package_versions_url = f"https://api.github.com/orgs/{package_owner}/packages/container/{package_name}/versions"
+        page = 1
+        tag_rows: List[str] = []
+        async with httpx.AsyncClient() as client:
+            while True:
+                resp = await client.get(
+                    package_versions_url,
+                    headers=headers,
+                    params={"per_page": 100, "page": page, "state": "active"},
+                )
+                if resp.status_code == 404:
+                    return [], ""
+                if resp.status_code in (401, 403):
+                    return [], "GitHub Packages access denied for container registry tags"
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=resp.status_code, detail=resp.text)
+                values = resp.json() or []
+                if not values:
+                    break
+                for version in values:
+                    metadata = version.get("metadata") or {}
+                    container = metadata.get("container") or {}
+                    for tag_name in container.get("tags") or []:
+                        tag = str(tag_name or "").strip()
+                        if tag:
+                            tag_rows.append(tag)
+                page += 1
+        seen: set[str] = set()
+        ordered_tags: List[str] = []
+        for tag in tag_rows:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            ordered_tags.append(tag)
+        return ordered_tags, ""
+
     def normalize_version_tag(requested_version: str, available_tags: List[str]) -> str | None:
         if requested_version in available_tags:
             return requested_version
@@ -1657,6 +1694,8 @@ async def github_branch_commits(
 
     tags_by_commit: Dict[str, List[str]] = {}
     latest_tag: str | None = None
+    registry_tags: List[str] = []
+    registry_tags_error = ""
     if commit_shas:
         tags_cache_key = (owner, repo)
         if GITHUB_TAGS_CACHE_TTL_SECONDS > 0 and not force_refresh:
@@ -1682,6 +1721,7 @@ async def github_branch_commits(
             head_tags = tags_by_commit.get(head_sha, [])
             if head_tags:
                 latest_tag = head_tags[0]
+        registry_tags, registry_tags_error = await fetch_registry_tags(owner, repo)
 
     commit_pr_numbers: Dict[str, List[int]] = {}
     unique_pr_numbers: set[int] = set()
@@ -1809,6 +1849,8 @@ async def github_branch_commits(
         "ahead_by": data.get("ahead_by"),
         "behind_by": data.get("behind_by"),
         "latest_tag": latest_tag,
+        "registry_tags": registry_tags,
+        "registry_tags_error": registry_tags_error,
         "total_commits": len(commits),
         "commits": commits,
     }
