@@ -472,7 +472,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   const isReadyForRelease = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
-  const isReadyToBeTested = (statusName) =>
+  const isReadyForTesting = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready to be tested';
   const commitHasReadyForReleaseJira = (commit) =>
     Array.isArray(commit?.jira)
@@ -673,13 +673,25 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const inBranch = Boolean(branchData);
       const inRelease = Boolean(releaseData?.inRelease) || (resolved ? branchFixVersions.includes(resolved) : false);
       const isMerged = inBranch;
-      const isGreen = isMerged && isReadyToBeTested(releaseData?.status || branchData?.status);
-      const greenMissingReasons = [];
-      if (!isReadyToBeTested(releaseData?.status || branchData?.status)) {
-        greenMissingReasons.push('Needs Ready To Be Tested');
+      const statusName = releaseData?.status || branchData?.status || '';
+      const hasOpenPrs = openPrsForTicket.length > 0;
+      const hasEligibleStatus = isReadyForRelease(statusName) || isReadyForTesting(statusName);
+      const isReadyForReleaseTicket = isMerged && !hasOpenPrs && isReadyForRelease(statusName);
+      const isReadyForTestingTicket = isMerged && !hasOpenPrs && isReadyForTesting(statusName);
+      const ticketStateLabel = isReadyForReleaseTicket
+        ? 'Ready for Release'
+        : isReadyForTestingTicket
+          ? 'Ready for Testing'
+          : '';
+      const readinessMissingReasons = [];
+      if (!hasEligibleStatus) {
+        readinessMissingReasons.push('Needs Ready for Release or Ready for Testing');
       }
       if (!isMerged) {
-        greenMissingReasons.push('Needs MERGED');
+        readinessMissingReasons.push('Needs MERGED');
+      }
+      if (hasOpenPrs) {
+        readinessMissingReasons.push('Needs no open PRs');
       }
       const canMergePr = !inBranch && mergeReadyPrs.length === 1;
       const hasFixVersion = ticketFixVersions.length > 0;
@@ -701,8 +713,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
         inBranch,
         inRelease,
         isMerged,
-        isGreen,
-        greenMissingReasons,
+        isReadyForReleaseTicket,
+        isReadyForTestingTicket,
+        ticketStateLabel,
+        readinessMissingReasons,
         ticketFixVersions,
         hasFixVersion,
         isOutsideSelectedRelease,
@@ -882,8 +896,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
   const releaseReconciliation = buildReleaseReconciliation();
-  const greenReleaseItems = releaseReconciliation.filter((item) => item.isGreen);
-  const nonGreenReleaseItems = releaseReconciliation.filter((item) => !item.isGreen);
+  const readyForReleaseItems = releaseReconciliation.filter((item) => item.isReadyForReleaseTicket);
+  const readyForTestingItems = releaseReconciliation.filter((item) => item.isReadyForTestingTicket);
+  const notReadyReleaseItems = releaseReconciliation.filter(
+    (item) => !item.isReadyForReleaseTicket && !item.isReadyForTestingTicket,
+  );
 
   const renderStagingJiraCard = (item) => {
     const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
@@ -896,7 +913,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
     return (
       <div
-        className={`card h-100 staging-card ${item.isGreen ? 'staging-status-ready' : item.isMerged || isReadyToBeTested(item.status) ? 'staging-status-warning' : 'staging-status-not-ready'}`}
+        className={`card h-100 staging-card ${item.isReadyForReleaseTicket || item.isReadyForTestingTicket ? 'staging-status-ready' : item.isMerged || isReadyForRelease(item.status) || isReadyForTesting(item.status) ? 'staging-status-warning' : 'staging-status-not-ready'}`}
       >
         <div className="card-header staging-status-header">
           <div className="d-flex align-items-start justify-content-between gap-2">
@@ -911,12 +928,12 @@ const [nextPollIn, setNextPollIn] = useState(30);
             </div>
             <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
               {item.status && (
-                <span className={`badge ${isReadyToBeTested(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                <span className={`badge ${isReadyForRelease(item.status) || isReadyForTesting(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
                   {item.status}
                 </span>
               )}
-              {item.isGreen && <span className="badge text-bg-success">GREEN</span>}
-              {item.isMerged && !item.isGreen && <span className="badge text-bg-warning text-dark">MERGED</span>}
+              {item.ticketStateLabel && <span className="badge text-bg-success">{item.ticketStateLabel}</span>}
+              {item.isMerged && !item.ticketStateLabel && <span className="badge text-bg-warning text-dark">MERGED</span>}
               {!item.isMerged && item.canMergePr && <span className="badge text-bg-warning">PR-READY</span>}
               {!item.isMerged && item.conflictPrCount > 0 && <span className="badge text-bg-danger">PR-CONFLICT</span>}
               {hasDraftOnlyPrs && <span className="badge text-bg-secondary">PR-DRAFT</span>}
@@ -934,9 +951,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   {`Outside Selected Release (${stagingResolvedVersion})`}
                 </span>
               )}
-              {!item.isGreen && Array.isArray(item.greenMissingReasons) && item.greenMissingReasons.length > 0 && (
+              {!item.ticketStateLabel && Array.isArray(item.readinessMissingReasons) && item.readinessMissingReasons.length > 0 && (
                 <span className="badge text-bg-dark">
-                  {item.greenMissingReasons.join(' + ')}
+                  {item.readinessMissingReasons.join(' + ')}
                 </span>
               )}
               {item.isMerged && item.mergedWhere && (
@@ -1456,23 +1473,34 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <div className="row g-3 mt-1">
                     <div className="col-12">
                       <div className="d-flex align-items-center gap-2 mt-1 mb-1">
-                        <span className="fw-semibold">Not GREEN</span>
-                        <span className="badge text-bg-secondary">{nonGreenReleaseItems.length}</span>
+                        <span className="fw-semibold">Not Ready for Release or Testing</span>
+                        <span className="badge text-bg-secondary">{notReadyReleaseItems.length}</span>
                       </div>
                     </div>
-                    {nonGreenReleaseItems.map((item) => (
-                      <div key={`not-green-${item.key}`} className="col-12 col-xl-6">
+                    {notReadyReleaseItems.map((item) => (
+                      <div key={`not-ready-${item.key}`} className="col-12 col-xl-6">
                         {renderStagingJiraCard(item)}
                       </div>
                     ))}
                     <div className="col-12 mt-2">
                       <div className="d-flex align-items-center gap-2 mb-1">
-                        <span className="fw-semibold">GREEN</span>
-                        <span className="badge text-bg-success">{greenReleaseItems.length}</span>
+                        <span className="fw-semibold">Ready for Testing</span>
+                        <span className="badge text-bg-success">{readyForTestingItems.length}</span>
                       </div>
                     </div>
-                    {greenReleaseItems.map((item) => (
-                      <div key={`merged-${item.key}`} className="col-12 col-xl-6">
+                    {readyForTestingItems.map((item) => (
+                      <div key={`ready-testing-${item.key}`} className="col-12 col-xl-6">
+                        {renderStagingJiraCard(item)}
+                      </div>
+                    ))}
+                    <div className="col-12 mt-2">
+                      <div className="d-flex align-items-center gap-2 mb-1">
+                        <span className="fw-semibold">Ready for Release</span>
+                        <span className="badge text-bg-success">{readyForReleaseItems.length}</span>
+                      </div>
+                    </div>
+                    {readyForReleaseItems.map((item) => (
+                      <div key={`ready-release-${item.key}`} className="col-12 col-xl-6">
                         {renderStagingJiraCard(item)}
                       </div>
                     ))}
