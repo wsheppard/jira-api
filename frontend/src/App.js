@@ -473,7 +473,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const isReadyForRelease = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
   const isReadyForTesting = (statusName) =>
-    typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for testing';
+    typeof statusName === 'string' && (
+      statusName.trim().toLowerCase() === 'ready for testing'
+      || statusName.trim().toLowerCase() === 'ready to be tested'
+    );
   const commitHasReadyForReleaseJira = (commit) =>
     Array.isArray(commit?.jira)
     && commit.jira.length > 0
@@ -675,7 +678,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const isMerged = inBranch;
       const statusName = releaseData?.status || branchData?.status || '';
       const hasOpenPrs = openPrsForTicket.length > 0;
-      const hasEligibleStatus = isReadyForRelease(statusName) || isReadyForTesting(statusName);
       const isReadyForReleaseTicket = isMerged && !hasOpenPrs && isReadyForRelease(statusName);
       const isReadyForTestingTicket = isMerged && !hasOpenPrs && isReadyForTesting(statusName);
       const ticketStateLabel = isReadyForReleaseTicket
@@ -683,16 +685,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
         : isReadyForTestingTicket
           ? 'Ready for Testing'
           : '';
-      const readinessMissingReasons = [];
-      if (!hasEligibleStatus) {
-        readinessMissingReasons.push('Needs Ready for Release or Ready for Testing');
-      }
-      if (!isMerged) {
-        readinessMissingReasons.push('Needs MERGED');
-      }
-      if (hasOpenPrs) {
-        readinessMissingReasons.push('Needs no open PRs');
-      }
       const canMergePr = !inBranch && mergeReadyPrs.length === 1;
       const hasFixVersion = ticketFixVersions.length > 0;
       const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
@@ -716,7 +708,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
         isReadyForReleaseTicket,
         isReadyForTestingTicket,
         ticketStateLabel,
-        readinessMissingReasons,
         ticketFixVersions,
         hasFixVersion,
         isOutsideSelectedRelease,
@@ -965,11 +956,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
               {item.isOutsideSelectedRelease && (
                 <span className="badge text-bg-warning">
                   {`Outside Selected Release (${stagingResolvedVersion})`}
-                </span>
-              )}
-              {!item.ticketStateLabel && Array.isArray(item.readinessMissingReasons) && item.readinessMissingReasons.length > 0 && (
-                <span className="badge text-bg-dark">
-                  {item.readinessMissingReasons.join(' + ')}
                 </span>
               )}
               {item.isMerged && item.mergedWhere && (
