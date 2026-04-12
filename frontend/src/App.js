@@ -497,7 +497,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
         return a.localeCompare(b);
       })
   );
-  const normalizeRegistryTag = (tag) => (typeof tag === 'string' ? tag.trim().replace(/\//g, '-') : '');
+  const normalizeRegistryTag = (tag) => {
+    if (typeof tag !== 'string') {
+      return '';
+    }
+    const normalized = tag.trim().replace(/\//g, '-');
+    return normalized.replace(/-\d+-g[0-9a-f]+$/i, '');
+  };
 
   const buildRangeTags = () => {
     const allTagRows = new Map();
@@ -870,17 +876,22 @@ const [nextPollIn, setNextPollIn] = useState(30);
   });
   const rangeTags = buildRangeTags();
   const commitTagTimeline = buildCommitTagTimeline();
-  const registryTagSet = new Set(
-    (Array.isArray(githubCompare?.registry_tags) ? githubCompare.registry_tags : [])
-      .map((tag) => normalizeRegistryTag(tag))
-      .filter(Boolean),
-  );
+  const registryTagMap = new Map();
+  (Array.isArray(githubCompare?.registry_tags) ? githubCompare.registry_tags : []).forEach((tag) => {
+    const rawTag = typeof tag === 'string' ? tag.trim() : '';
+    const normalizedTag = normalizeRegistryTag(rawTag);
+    if (normalizedTag && !registryTagMap.has(normalizedTag)) {
+      registryTagMap.set(normalizedTag, rawTag);
+    }
+  });
   const buildTagRows = rangeTags.all.map((entry) => {
     const registryTag = normalizeRegistryTag(entry.tag);
+    const matchedRegistryTag = registryTagMap.get(registryTag) || '';
     return {
       gitTag: entry.tag,
       registryTag,
-      present: registryTagSet.has(registryTag),
+      matchedRegistryTag,
+      present: Boolean(matchedRegistryTag),
     };
   });
   const commitGroupByKey = new Map(
@@ -1323,10 +1334,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <span
                         key={`registry-tag-${row.gitTag}`}
                         className={`badge ${row.present ? 'staging-registry-tag-present' : 'staging-registry-tag-missing'}`}
-                        title={row.registryTag}
+                        title={row.matchedRegistryTag || row.registryTag}
                       >
                         <span className="me-1">{row.gitTag}</span>
-                        {row.registryTag !== row.gitTag && (
+                        {row.present && row.matchedRegistryTag && row.matchedRegistryTag !== row.registryTag && (
+                          <span className="staging-registry-tag-target">{`→ ${row.matchedRegistryTag}`}</span>
+                        )}
+                        {!row.present && row.registryTag !== row.gitTag && (
                           <span className="staging-registry-tag-target">{`→ ${row.registryTag}`}</span>
                         )}
                         <span className="ms-1">{row.present ? 'built' : 'missing'}</span>
