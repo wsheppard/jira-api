@@ -201,12 +201,6 @@
   bottom: calc(50% - 1px);
 }
 
-.staging-label-badge {
-  background: #e7f3ff;
-  color: #084298;
-  border: 1px solid #9ec5fe;
-}
-
 .staging-group-title {
   white-space: normal;
   overflow-wrap: anywhere;

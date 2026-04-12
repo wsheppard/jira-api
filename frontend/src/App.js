@@ -593,8 +593,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   const buildReleaseReconciliation = () => {
     const resolved = stagingResolvedVersion;
-    const compareFromRef = githubCompare?.from_ref || '';
-    const compareToRef = githubCompare?.to_ref || '';
     const releaseMap = new Map();
     const upsertRelease = (ticket) => {
       if (!ticket?.ticket) return;
@@ -685,22 +683,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const hasOpenPrs = openPrsForTicket.length > 0;
       const isReadyForReleaseTicket = isMerged && !hasOpenPrs && isReadyForRelease(statusName);
       const isReadyForTestingTicket = isMerged && !hasOpenPrs && isReadyForTesting(statusName);
-      const ticketStateLabel = isReadyForReleaseTicket
-        ? 'Ready for Release'
-        : isReadyForTestingTicket
-          ? 'Ready for Testing'
-          : '';
       const canMergePr = !inBranch && mergeReadyPrs.length === 1;
       const hasFixVersion = ticketFixVersions.length > 0;
       const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
-      let mergedWhere = '';
-      let mergedWhereDetail = '';
-      if (inBranch) {
-        mergedWhere = compareToRef ? `Seen in ${compareToRef}` : 'Seen in selected compare head';
-        mergedWhereDetail = compareFromRef && compareToRef ? `${compareFromRef} -> ${compareToRef}` : '';
-      } else if (inRelease) {
-        mergedWhere = resolved ? `In Jira Fix Version ${resolved}` : 'In Jira release scope';
-      }
       return {
         key,
         title: releaseData?.title || branchData?.title || '',
@@ -712,18 +697,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
         isMerged,
         isReadyForReleaseTicket,
         isReadyForTestingTicket,
-        ticketStateLabel,
         ticketFixVersions,
         hasFixVersion,
         isOutsideSelectedRelease,
-        mergedWhere,
-        mergedWhereDetail,
         canMergePr,
         openPrCount: openPrsForTicket.length,
         mergeReadyPrCount: mergeReadyPrs.length,
         conflictPrCount: conflictPrs.length,
         associatedPrs,
-        mergedCodexIntegrationTags: sortCodexIntegrationTags(Array.from(ticketCodexTagMap.get(key) || [])),
         isReleaseParent: labels.includes('release-ticket') || labels.includes('release-train'),
         descriptionText: releaseData?.descriptionText || '',
         latestComment: releaseData?.latestComment || null,
@@ -923,10 +904,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
     const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
     const hasCodeEvidence = item.isMerged || commitsForItem.length > 0 || item.openPrCount > 0;
     const noCode = !hasCodeEvidence;
-    const hasDraftOnlyPrs = !item.isMerged
-      && item.openPrCount > 0
-      && item.mergeReadyPrCount === 0
-      && item.conflictPrCount === 0;
 
     return (
       <div
@@ -942,46 +919,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
               ) : (
                 <span className="fw-semibold">{item.key}</span>
               )}
-            </div>
-            <div className="d-flex flex-wrap justify-content-end gap-2 text-end">
-              {item.status && (
-                <span className={`badge ${isReadyForRelease(item.status) || isReadyForTesting(item.status) ? 'text-bg-success' : 'text-bg-secondary'}`}>
-                  {item.status}
-                </span>
-              )}
-              {item.ticketStateLabel && <span className="badge text-bg-success">{item.ticketStateLabel}</span>}
-              {item.isMerged && !item.ticketStateLabel && <span className="badge text-bg-warning text-dark">MERGED</span>}
-              {!item.isMerged && item.canMergePr && <span className="badge text-bg-warning">PR-READY</span>}
-              {!item.isMerged && item.conflictPrCount > 0 && <span className="badge text-bg-danger">PR-CONFLICT</span>}
-              {hasDraftOnlyPrs && <span className="badge text-bg-secondary">PR-DRAFT</span>}
-              {!item.isMerged && item.openPrCount > 0 && (
-                <span className="badge text-bg-light border">{`PRs (${item.openPrCount})`}</span>
-              )}
-              {noCode && <span className="badge text-bg-dark">NO CODE</span>}
-              {Array.isArray(item.ticketFixVersions) && item.ticketFixVersions.length > 0 && (
-                <span className="badge text-bg-info">
-                  {`Fix Version: ${item.ticketFixVersions.join(', ')}`}
-                </span>
-              )}
-              {item.isOutsideSelectedRelease && (
-                <span className="badge text-bg-warning">
-                  {`Outside Selected Release (${stagingResolvedVersion})`}
-                </span>
-              )}
-              {item.isMerged && item.mergedWhere && (
-                <span className="badge text-bg-light border">{item.mergedWhere}</span>
-              )}
-              {item.isMerged && item.mergedCodexIntegrationTags.length > 0 && (
-                <span className="badge text-bg-light border">
-                  {`Reachable Tag: ${item.mergedCodexIntegrationTags[item.mergedCodexIntegrationTags.length - 1]}`}
-                </span>
-              )}
-              {item.inBranch && !item.hasFixVersion && (
-                <span className="badge text-bg-warning">Missing Fix Version</span>
-              )}
-              {Array.isArray(item.labels) && item.labels.map((label) => (
-                <span key={`${item.key}-recon-${label}`} className="badge staging-label-badge">{label}</span>
-              ))}
             </div>
           </div>
           <div className="text-muted mt-2">
@@ -1045,23 +982,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   );
                 })}
               </div>
-            </div>
-          )}
-          {item.isMerged && item.mergedWhereDetail && (
-            <div className="text-muted small mt-1">
-              Range: {item.mergedWhereDetail}
-            </div>
-          )}
-          {item.isMerged && (
-            <div className="small mt-2">
-              <span className="text-muted me-1">Codex-integration tag history:</span>
-              {item.mergedCodexIntegrationTags.length > 0 ? (
-                item.mergedCodexIntegrationTags.map((tag) => (
-                  <span key={`${item.key}-codex-tag-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
-                ))
-              ) : (
-                <span className="text-muted">No codex-integration tag on commits in this range.</span>
-              )}
             </div>
           )}
         </div>
