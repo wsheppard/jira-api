@@ -115,7 +115,7 @@ function App() {
   const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
   const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
   const [stagingNextVersion, setStagingNextVersion] = useState('');
-  const [stagingActiveTab, setStagingActiveTab] = useState('jiraCards');
+  const [stagingActiveTab, setStagingActiveTab] = useState('readyForRelease');
   const [githubRefreshInProgress, setGithubRefreshInProgress] = useState(false);
   const [githubPrQueue, setGithubPrQueue] = useState([]);
   const [prQueueSearch, setPrQueueSearch] = useState('');
@@ -339,7 +339,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   useEffect(() => {
     if (activeView !== STAGING_VIEW_ID) {
-      setStagingActiveTab('jiraCards');
+      setStagingActiveTab('readyForRelease');
     }
   }, [activeView]);
 
@@ -473,7 +473,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const isReadyForRelease = (statusName) =>
     typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for release';
   const isReadyForTesting = (statusName) =>
-    typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready to be tested';
+    typeof statusName === 'string' && statusName.trim().toLowerCase() === 'ready for testing';
   const commitHasReadyForReleaseJira = (commit) =>
     Array.isArray(commit?.jira)
     && commit.jira.length > 0
@@ -898,8 +898,24 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const releaseReconciliation = buildReleaseReconciliation();
   const readyForReleaseItems = releaseReconciliation.filter((item) => item.isReadyForReleaseTicket);
   const readyForTestingItems = releaseReconciliation.filter((item) => item.isReadyForTestingTicket);
-  const notReadyReleaseItems = releaseReconciliation.filter(
+  const otherReleaseItems = releaseReconciliation.filter(
     (item) => !item.isReadyForReleaseTicket && !item.isReadyForTestingTicket,
+  );
+
+  const renderStagingTicketGrid = (items, emptyMessage, keyPrefix) => (
+    <div className="row g-3 mt-1">
+      {items.length > 0 ? (
+        items.map((item) => (
+          <div key={`${keyPrefix}-${item.key}`} className="col-12 col-xl-6">
+            {renderStagingJiraCard(item)}
+          </div>
+        ))
+      ) : (
+        <div className="col-12">
+          <div className="text-muted small">{emptyMessage}</div>
+        </div>
+      )}
+    </div>
   );
 
   const renderStagingJiraCard = (item) => {
@@ -1338,11 +1354,34 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   <li className="nav-item">
                     <button
                       type="button"
-                      className={`nav-link ${stagingActiveTab === 'jiraCards' ? 'active' : ''}`}
-                      onClick={() => setStagingActiveTab('jiraCards')}
-                      aria-current={stagingActiveTab === 'jiraCards' ? 'page' : undefined}
+                      className={`nav-link ${stagingActiveTab === 'readyForRelease' ? 'active' : ''}`}
+                      onClick={() => setStagingActiveTab('readyForRelease')}
+                      aria-current={stagingActiveTab === 'readyForRelease' ? 'page' : undefined}
                     >
-                      Jira Cards
+                      Ready for Release
+                      <span className="badge text-bg-success ms-2">{readyForReleaseItems.length}</span>
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link ${stagingActiveTab === 'readyForTesting' ? 'active' : ''}`}
+                      onClick={() => setStagingActiveTab('readyForTesting')}
+                      aria-current={stagingActiveTab === 'readyForTesting' ? 'page' : undefined}
+                    >
+                      Ready for Testing
+                      <span className="badge text-bg-success ms-2">{readyForTestingItems.length}</span>
+                    </button>
+                  </li>
+                  <li className="nav-item">
+                    <button
+                      type="button"
+                      className={`nav-link ${stagingActiveTab === 'others' ? 'active' : ''}`}
+                      onClick={() => setStagingActiveTab('others')}
+                      aria-current={stagingActiveTab === 'others' ? 'page' : undefined}
+                    >
+                      Others
+                      <span className="badge text-bg-secondary ms-2">{otherReleaseItems.length}</span>
                     </button>
                   </li>
                   <li className="nav-item">
@@ -1356,6 +1395,24 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     </button>
                   </li>
                 </ul>
+
+                {stagingActiveTab === 'readyForRelease' && renderStagingTicketGrid(
+                  readyForReleaseItems,
+                  'No tickets are ready for release.',
+                  'ready-release',
+                )}
+
+                {stagingActiveTab === 'readyForTesting' && renderStagingTicketGrid(
+                  readyForTestingItems,
+                  'No tickets are ready for testing.',
+                  'ready-testing',
+                )}
+
+                {stagingActiveTab === 'others' && renderStagingTicketGrid(
+                  otherReleaseItems,
+                  'No tickets in the Others bucket.',
+                  'other',
+                )}
 
                 {stagingActiveTab === 'commitTimeline' && (
                   <div className="card border mt-3">
@@ -1469,43 +1526,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </div>
                 )}
 
-                {stagingActiveTab === 'jiraCards' && (
-                  <div className="row g-3 mt-1">
-                    <div className="col-12">
-                      <div className="d-flex align-items-center gap-2 mt-1 mb-1">
-                        <span className="fw-semibold">Not Ready for Release or Testing</span>
-                        <span className="badge text-bg-secondary">{notReadyReleaseItems.length}</span>
-                      </div>
-                    </div>
-                    {notReadyReleaseItems.map((item) => (
-                      <div key={`not-ready-${item.key}`} className="col-12 col-xl-6">
-                        {renderStagingJiraCard(item)}
-                      </div>
-                    ))}
-                    <div className="col-12 mt-2">
-                      <div className="d-flex align-items-center gap-2 mb-1">
-                        <span className="fw-semibold">Ready for Testing</span>
-                        <span className="badge text-bg-success">{readyForTestingItems.length}</span>
-                      </div>
-                    </div>
-                    {readyForTestingItems.map((item) => (
-                      <div key={`ready-testing-${item.key}`} className="col-12 col-xl-6">
-                        {renderStagingJiraCard(item)}
-                      </div>
-                    ))}
-                    <div className="col-12 mt-2">
-                      <div className="d-flex align-items-center gap-2 mb-1">
-                        <span className="fw-semibold">Ready for Release</span>
-                        <span className="badge text-bg-success">{readyForReleaseItems.length}</span>
-                      </div>
-                    </div>
-                    {readyForReleaseItems.map((item) => (
-                      <div key={`ready-release-${item.key}`} className="col-12 col-xl-6">
-                        {renderStagingJiraCard(item)}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
           </div>
         </div>
