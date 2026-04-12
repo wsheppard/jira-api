@@ -33,7 +33,7 @@ Install the required dependencies:
 pip install fastapi uvicorn python-dotenv httpx
 ```
 
-Set `DIGITALOCEAN_API_TOKEN` so the staging view can read the container registry tags used for build matching.
+The staging view reads Docker registry tags through `api-bridges`, so no local DigitalOcean token is required.
 
 ## Usage
 
