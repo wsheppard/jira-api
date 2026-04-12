@@ -501,8 +501,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     if (typeof tag !== 'string') {
       return '';
     }
-    const normalized = tag.trim().replace(/\//g, '-');
-    return normalized.replace(/-\d+-g[0-9a-f]+$/i, '');
+    return tag.trim().replace(/\//g, '-');
   };
 
   const buildRangeTags = () => {
