@@ -115,7 +115,7 @@ function App() {
   const [stagingAvailableVersions, setStagingAvailableVersions] = useState([]);
   const [stagingResolvedVersion, setStagingResolvedVersion] = useState('');
   const [stagingNextVersion, setStagingNextVersion] = useState('');
-  const [stagingActiveTab, setStagingActiveTab] = useState('readyForRelease');
+  const [stagingActiveTab, setStagingActiveTab] = useState('others');
   const [githubRefreshInProgress, setGithubRefreshInProgress] = useState(false);
   const [githubPrQueue, setGithubPrQueue] = useState([]);
   const [prQueueSearch, setPrQueueSearch] = useState('');
@@ -339,7 +339,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   useEffect(() => {
     if (activeView !== STAGING_VIEW_ID) {
-      setStagingActiveTab('readyForRelease');
+      setStagingActiveTab('others');
     }
   }, [activeView]);
 
