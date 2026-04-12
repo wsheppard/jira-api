@@ -519,7 +519,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         });
       });
     });
-    const all = Array.from(allTagRows.values()).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const all = Array.from(allTagRows.values()).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     return {
       all,
       codex: sortCodexIntegrationTags(all.map((entry) => entry.tag)),
