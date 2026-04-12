@@ -89,6 +89,8 @@ if not jira_token:
 github_token = os.getenv("GITHUB_TOKEN")
 if not github_token:
     raise RuntimeError("GITHUB_TOKEN environment variable must be set")
+digitalocean_token = os.getenv("DIGITALOCEAN_API_TOKEN", "").strip()
+digitalocean_registry = os.getenv("DIGITALOCEAN_CONTAINER_REGISTRY", "jjr-repo-1").strip()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai_jql_model = os.getenv("OPENAI_JQL_MODEL", "gpt-4.1-mini")
 xai_api_key = os.getenv("XAI_API_KEY")
@@ -1532,34 +1534,82 @@ async def github_branch_commits(
                 page += 1
         return tag_rows
 
-    async def fetch_registry_tags(package_owner: str, package_name: str) -> tuple[List[str], str]:
-        package_versions_url = f"https://api.github.com/orgs/{package_owner}/packages/container/{package_name}/versions"
-        page = 1
+    async def fetch_registry_tags(registry_name: str) -> tuple[List[str], str]:
+        if not digitalocean_token:
+            return [], "DigitalOcean API token missing for container registry tags"
+
+        headers_do = {
+            "Authorization": f"Bearer {digitalocean_token}",
+            "Content-Type": "application/json",
+        }
+        registry_base_url = f"https://api.digitalocean.com/v2/registry/{registry_name}"
         tag_rows: List[str] = []
-        async with httpx.AsyncClient() as client:
+
+        async def fetch_registry_repositories(client: httpx.AsyncClient) -> List[str]:
+            page = 1
+            repository_names: List[str] = []
             while True:
                 resp = await client.get(
-                    package_versions_url,
-                    headers=headers,
-                    params={"per_page": 100, "page": page, "state": "active"},
+                    f"{registry_base_url}/repositories",
+                    headers=headers_do,
+                    params={"per_page": 100, "page": page},
                 )
                 if resp.status_code == 404:
-                    return [], ""
+                    return []
                 if resp.status_code in (401, 403):
-                    return [], "GitHub Packages access denied for container registry tags"
+                    raise HTTPException(status_code=502, detail="DigitalOcean registry access denied for container registry tags")
                 if resp.status_code != 200:
                     raise HTTPException(status_code=resp.status_code, detail=resp.text)
-                values = resp.json() or []
-                if not values:
+                payload = resp.json() or {}
+                repositories = payload.get("repositories") or []
+                if not repositories:
                     break
-                for version in values:
-                    metadata = version.get("metadata") or {}
-                    container = metadata.get("container") or {}
-                    for tag_name in container.get("tags") or []:
-                        tag = str(tag_name or "").strip()
-                        if tag:
-                            tag_rows.append(tag)
+                for repository in repositories:
+                    name = str(repository.get("name") or "").strip()
+                    if name:
+                        repository_names.append(name)
+                links = (payload.get("links") or {}).get("pages") or {}
+                if not links.get("next"):
+                    break
                 page += 1
+            return repository_names
+
+        async def fetch_repository_tags(client: httpx.AsyncClient, repository_name: str) -> List[str]:
+            page = 1
+            repository_tags: List[str] = []
+            while True:
+                resp = await client.get(
+                    f"{registry_base_url}/repositories/{repository_name}/tags",
+                    headers=headers_do,
+                    params={"per_page": 100, "page": page},
+                )
+                if resp.status_code == 404:
+                    return []
+                if resp.status_code in (401, 403):
+                    raise HTTPException(status_code=502, detail="DigitalOcean registry access denied for container registry tags")
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=resp.status_code, detail=resp.text)
+                payload = resp.json() or {}
+                tags = payload.get("tags") or []
+                if not tags:
+                    break
+                for tag_info in tags:
+                    tag = str(tag_info.get("tag") or "").strip()
+                    if tag:
+                        repository_tags.append(tag)
+                links = (payload.get("links") or {}).get("pages") or {}
+                if not links.get("next"):
+                    break
+                page += 1
+            return repository_tags
+
+        async with httpx.AsyncClient() as client:
+            repository_names = await fetch_registry_repositories(client)
+            if not repository_names:
+                return [], ""
+            repository_tag_lists = await asyncio.gather(*(fetch_repository_tags(client, repository_name) for repository_name in repository_names))
+        for repository_tags in repository_tag_lists:
+            tag_rows.extend(repository_tags)
         seen: set[str] = set()
         ordered_tags: List[str] = []
         for tag in tag_rows:
@@ -1721,7 +1771,7 @@ async def github_branch_commits(
             head_tags = tags_by_commit.get(head_sha, [])
             if head_tags:
                 latest_tag = head_tags[0]
-        registry_tags, registry_tags_error = await fetch_registry_tags(owner, repo)
+        registry_tags, registry_tags_error = await fetch_registry_tags(digitalocean_registry)
 
     commit_pr_numbers: Dict[str, List[int]] = {}
     unique_pr_numbers: set[int] = set()
