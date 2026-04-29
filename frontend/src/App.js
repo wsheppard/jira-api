@@ -682,7 +682,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       const statusName = releaseData?.status || branchData?.status || '';
       const hasOpenPrs = openPrsForTicket.length > 0;
       const isReadyForReleaseTicket = isMerged && !hasOpenPrs && isReadyForRelease(statusName);
-      const isReadyForTestingTicket = isMerged && !hasOpenPrs && isReadyForTesting(statusName);
+      const isReadyForTestingTicket = isReadyForTesting(statusName);
       const canMergePr = !inBranch && mergeReadyPrs.length === 1;
       const hasFixVersion = ticketFixVersions.length > 0;
       const isOutsideSelectedRelease = Boolean(resolved) && hasFixVersion && !ticketFixVersions.includes(resolved);
@@ -902,8 +902,9 @@ const [nextPollIn, setNextPollIn] = useState(30);
 
   const renderStagingJiraCard = (item) => {
     const commitsForItem = commitGroupByKey.get(item.key)?.commits || [];
-    const hasCodeEvidence = item.isMerged || commitsForItem.length > 0 || item.openPrCount > 0;
-    const noCode = !hasCodeEvidence;
+    const hasDetectedCommits = commitsForItem.length > 0;
+    const hasMergeProblem = item.conflictPrCount > 0
+      || (Array.isArray(item.associatedPrs) && item.associatedPrs.some((pr) => pr?.merge_warning));
 
     return (
       <div
@@ -929,6 +930,10 @@ const [nextPollIn, setNextPollIn] = useState(30);
               {item.audienceSummary}
             </div>
           )}
+          <div className="d-flex flex-wrap gap-2 mt-3">
+            {!hasDetectedCommits && <span className="badge text-bg-warning">no commits detected</span>}
+            {hasMergeProblem && <span className="badge text-bg-danger">merge problem</span>}
+          </div>
           {Array.isArray(item.associatedPrs) && item.associatedPrs.length > 0 && (
             <div className="mt-3">
               <div className="small text-muted mb-2">Associated PRs</div>
@@ -988,13 +993,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
         <div className="card-body">
           {commitsForItem.length === 0 ? (
             <div className="text-muted small">
-              {noCode
-                ? 'No commits and no open PR for this ticket.'
-                : !item.isMerged && item.inRelease
-                  ? 'In Jira Fix Version, but no commits found in this selected compare range.'
-                  : item.isMerged
-                    ? 'Merged, but no commits found in this selected compare range.'
-                    : 'No commits found in this selected compare range.'}
+              No associated or detected commits found for this ticket.
             </div>
           ) : (
             <ul className="list-group list-group-flush">
