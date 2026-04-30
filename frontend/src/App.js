@@ -874,6 +874,29 @@ const [nextPollIn, setNextPollIn] = useState(30);
       present: Boolean(matchedRegistryTag),
     };
   });
+  const buildTagRowByGitTag = new Map(buildTagRows.map((row) => [row.gitTag, row]));
+  const renderBuildStatusBadge = (tag, keyPrefix) => {
+    const row = buildTagRowByGitTag.get(tag);
+    if (!row) {
+      return null;
+    }
+
+    return (
+      <span
+        key={`${keyPrefix}-build-${tag}`}
+        className={`badge ${row.present ? 'staging-registry-tag-present' : 'staging-registry-tag-missing'}`}
+        title={row.matchedRegistryTag || row.registryTag}
+      >
+        {row.present ? 'built' : 'missing'}
+        {row.present && row.matchedRegistryTag && row.matchedRegistryTag !== row.registryTag && (
+          <span className="staging-registry-tag-target ms-1">{`→ ${row.matchedRegistryTag}`}</span>
+        )}
+        {!row.present && row.registryTag !== row.gitTag && (
+          <span className="staging-registry-tag-target ms-1">{`→ ${row.registryTag}`}</span>
+        )}
+      </span>
+    );
+  };
   const commitGroupByKey = new Map(
     commitGroups.filter((group) => group.key !== 'NO-JIRA').map((group) => [group.key, group]),
   );
@@ -1246,26 +1269,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                     ))}
                   </div>
                 )}
-                {buildTagRows.length > 0 && (
-                  <div className="mt-2 d-flex flex-wrap gap-1">
-                    {buildTagRows.map((row) => (
-                      <span
-                        key={`registry-tag-${row.gitTag}`}
-                        className={`badge ${row.present ? 'staging-registry-tag-present' : 'staging-registry-tag-missing'}`}
-                        title={row.matchedRegistryTag || row.registryTag}
-                      >
-                        <span className="me-1">{row.gitTag}</span>
-                        {row.present && row.matchedRegistryTag && row.matchedRegistryTag !== row.registryTag && (
-                          <span className="staging-registry-tag-target">{`→ ${row.matchedRegistryTag}`}</span>
-                        )}
-                        {!row.present && row.registryTag !== row.gitTag && (
-                          <span className="staging-registry-tag-target">{`→ ${row.registryTag}`}</span>
-                        )}
-                        <span className="ms-1">{row.present ? 'built' : 'missing'}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
               <div className="mb-3">
                 <ul className="nav nav-tabs">
@@ -1382,9 +1385,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                       <div className="small mt-1">PRs: {renderPrLinks(row.prs)}</div>
                                     )}
                                     {row.tagsOnCommit.length > 0 && (
-                                      <div className="mt-1">
+                                      <div className="mt-1 d-flex flex-wrap gap-1 align-items-center">
                                         {row.tagsOnCommit.map((tag) => (
-                                          <span key={`${row.sha}-on-${tag}`} className="badge text-bg-secondary me-1">{tag}</span>
+                                          <span
+                                            key={`${row.sha}-on-${tag}`}
+                                            className="d-inline-flex gap-1 align-items-center me-1"
+                                          >
+                                            <span className="badge text-bg-secondary">{tag}</span>
+                                            {renderBuildStatusBadge(tag, `${row.sha}-on`)}
+                                          </span>
                                         ))}
                                       </div>
                                     )}
@@ -1393,7 +1402,13 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                       {row.hasTaggedBuild ? (
                                         <>
                                           {row.includedInRangeTags.slice(0, 2).map((tag) => (
-                                            <span key={`${row.sha}-reachable-${tag}`} className="badge staging-tag-badge me-1">{tag}</span>
+                                            <span
+                                              key={`${row.sha}-reachable-${tag}`}
+                                              className="d-inline-flex gap-1 align-items-center me-1"
+                                            >
+                                              <span className="badge staging-tag-badge">{tag}</span>
+                                              {renderBuildStatusBadge(tag, `${row.sha}-reachable`)}
+                                            </span>
                                           ))}
                                           {row.includedInRangeTags.length > 2 && (
                                             <span className="text-muted">+{row.includedInRangeTags.length - 2} more</span>
