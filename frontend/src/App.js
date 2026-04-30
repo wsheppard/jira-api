@@ -561,21 +561,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
       });
     });
 
-    const includedByIndex = timelineAsc.map(() => new Set());
-    tagAnchors.forEach((anchor) => {
-      for (let i = 0; i <= anchor.index; i += 1) {
-        includedByIndex[i].add(anchor.tag);
-      }
-    });
-
-    const rowsAsc = timelineAsc.map((commit, index) => {
+    const rowsAsc = timelineAsc.map((commit) => {
       const tagsOnCommit = Array.isArray(commit?.tags) ? [...new Set(commit.tags.filter(Boolean))].sort() : [];
-      const includedInRangeTags = Array.from(includedByIndex[index]).sort();
       return {
         ...commit,
         tagsOnCommit,
-        includedInRangeTags,
-        hasTaggedBuild: includedInRangeTags.length > 0,
       };
     });
 
@@ -587,7 +577,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
     return {
       rows,
       tagAnchors: [...new Map(tagAnchors.map((anchor) => [anchor.tag, anchor])).values()],
-      untaggedRows: rows.filter((row) => !row.hasTaggedBuild),
     };
   };
 
@@ -1341,9 +1330,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                       <span className="fw-semibold">Commit Tag Timeline</span>
                       <span className="badge text-bg-light border">{commitTagTimeline.rows.length} commits</span>
                       <span className="badge text-bg-light border">{commitTagTimeline.tagAnchors.length} tag points</span>
-                      <span className={`badge ${commitTagTimeline.untaggedRows.length > 0 ? 'text-bg-warning' : 'text-bg-success'}`}>
-                        {commitTagTimeline.untaggedRows.length} with no tag reachable in selected range
-                      </span>
                     </div>
                     <div className="card-body p-0">
                       {commitTagTimeline.rows.length === 0 ? (
@@ -1397,27 +1383,6 @@ const [nextPollIn, setNextPollIn] = useState(30);
                                         ))}
                                       </div>
                                     )}
-                                    <div className="small mt-1">
-                                      <span className="text-muted me-1">Reachable in range:</span>
-                                      {row.hasTaggedBuild ? (
-                                        <>
-                                          {row.includedInRangeTags.slice(0, 2).map((tag) => (
-                                            <span
-                                              key={`${row.sha}-reachable-${tag}`}
-                                              className="d-inline-flex gap-1 align-items-center me-1"
-                                            >
-                                              <span className="badge staging-tag-badge">{tag}</span>
-                                              {renderBuildStatusBadge(tag, `${row.sha}-reachable`)}
-                                            </span>
-                                          ))}
-                                          {row.includedInRangeTags.length > 2 && (
-                                            <span className="text-muted">+{row.includedInRangeTags.length - 2} more</span>
-                                          )}
-                                        </>
-                                      ) : (
-                                        <span className="badge text-bg-warning">None</span>
-                                      )}
-                                    </div>
                                   </td>
                                   <td>
                                     {Array.isArray(row.jira) && row.jira.length > 0 ? (
