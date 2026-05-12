@@ -735,11 +735,11 @@ const [nextPollIn, setNextPollIn] = useState(30);
     const buildRef = githubCompare?.to_ref || 'codex/integration';
     try {
       const payload = await postJson(
-        `site-build?owner=palliativa&repo=monorepo&workflow=build-site.yml&ref=${encodeURIComponent(buildRef)}`,
+        `site-build?owner=palliativa&repo=monorepo&workflow=build-site.yml&ref=${encodeURIComponent(buildRef)}&provider=api_bridges`,
       );
       const action = payload?.run_url
-        ? `Queued workflow run: ${payload.run_url}`
-        : 'Build workflow dispatch sent.';
+        ? `Build triggered: ${payload.run_url}`
+        : `Build trigger sent (${payload?.provider || 'api_bridges'}).`;
       setSiteBuildMessage(action);
       setSiteBuildRun(payload || null);
     } catch (error) {

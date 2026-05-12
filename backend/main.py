@@ -92,6 +92,9 @@ if not github_token:
     raise RuntimeError("GITHUB_TOKEN environment variable must be set")
 API_BRIDGES_BASE_URL = "https://api-bridges.ryzen.jjrsoftware.co.uk"
 DIGITALOCEAN_REGISTRY_NAME = "jjr-repo-1"
+SITE_BUILD_PROVIDER = os.getenv("SITE_BUILD_PROVIDER", "api_bridges").strip().lower()
+SITE_BUILD_TRIGGER_PATH = os.getenv("SITE_BUILD_TRIGGER_PATH", "").strip()
+SITE_BUILD_TRIGGER_TIMEOUT_SECONDS = int(os.getenv("SITE_BUILD_TRIGGER_TIMEOUT_SECONDS", "30"))
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai_jql_model = os.getenv("OPENAI_JQL_MODEL", "gpt-4.1-mini")
 xai_api_key = os.getenv("XAI_API_KEY")
@@ -1077,67 +1080,128 @@ async def trigger_site_build(
     repo: str = "monorepo",
     workflow: str = "build-site.yml",
     ref: str = "codex/integration",
+    provider: str = "",
 ) -> Dict[str, Any]:
-    """Trigger a monorepo site build workflow and return the latest matching workflow run."""
+    """Trigger a monorepo site build and return execution metadata."""
     workflow = workflow.strip()
-    if not workflow:
-        raise HTTPException(status_code=400, detail="Workflow must be provided")
+    if provider:
+        provider = provider.strip().lower()
+    else:
+        provider = SITE_BUILD_PROVIDER
+    if not provider:
+        provider = "api_bridges"
 
     ref = ref.strip() or "codex/integration"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {github_token}",
-        "X-GitHub-Api-Version": "2022-11-28",
+    trigger_request = {
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "workflow": workflow,
     }
-    encoded_workflow = quote(workflow, safe="")
 
-    dispatch_url = (
-        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/dispatches"
-    )
-    compare_url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/runs"
+    if provider in {"github", "github_actions", "gh_actions"}:
+        if not workflow:
+            raise HTTPException(status_code=400, detail="Workflow must be provided")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        dispatch_resp = await client.post(dispatch_url, headers=headers, json={"ref": ref})
-    if dispatch_resp.status_code not in (200, 204):
-        raise HTTPException(status_code=dispatch_resp.status_code, detail=dispatch_resp.text)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        encoded_workflow = quote(workflow, safe="")
 
-    latest_run: Dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        runs_resp = await client.get(
-            compare_url,
-            headers=headers,
-            params={"per_page": 5, "event": "workflow_dispatch", "branch": ref},
+        dispatch_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/dispatches"
         )
-    if runs_resp.status_code != 200:
+        compare_url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/runs"
+        run_id = ""
+        run_url = ""
+        run_status = "triggered"
+        run_created_at = ""
+        head_sha = ""
+        head_branch = ref
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            dispatch_resp = await client.post(dispatch_url, headers=headers, json={"ref": ref})
+        if dispatch_resp.status_code not in (200, 204):
+            raise HTTPException(status_code=dispatch_resp.status_code, detail=dispatch_resp.text)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            runs_resp = await client.get(
+                compare_url,
+                headers=headers,
+                params={"per_page": 5, "event": "workflow_dispatch", "branch": ref},
+            )
+        if runs_resp.status_code == 200:
+            runs_payload = runs_resp.json() or {}
+            candidate_runs = runs_payload.get("workflow_runs") or []
+            if candidate_runs:
+                latest_run = candidate_runs[0]
+                run_id = latest_run.get("id") or ""
+                run_url = latest_run.get("html_url") or ""
+                run_status = latest_run.get("status") or run_status
+                run_created_at = latest_run.get("created_at") or ""
+                head_sha = latest_run.get("head_sha") or ""
+                head_branch = latest_run.get("head_branch") or ref
+
         return {
             "owner": owner,
             "repo": repo,
             "workflow": workflow,
             "ref": ref,
+            "provider": provider,
             "triggered": True,
-            "run_id": "",
-            "run_url": "",
-            "status": "triggered_without_run_metadata",
+            "run_id": run_id,
+            "run_url": run_url,
+            "status": run_status,
+            "run_created_at": run_created_at,
+            "head_sha": head_sha,
+            "head_branch": head_branch,
         }
 
-    runs_payload = runs_resp.json() or {}
-    candidate_runs = runs_payload.get("workflow_runs") or []
-    if candidate_runs:
-        latest_run = candidate_runs[0]
+    if provider in {"api_bridges", "api-bridges", "apibridge", "apibridges"}:
+        if not SITE_BUILD_TRIGGER_PATH:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "SITE_BUILD_TRIGGER_PATH is required when SITE_BUILD_PROVIDER/api-bridges path is selected. "
+                    "Set SITE_BUILD_TRIGGER_PATH to a full api-bridges endpoint path, for example '/v1/monorepo/trigger-build'."
+                ),
+            )
+        trigger_url = SITE_BUILD_TRIGGER_PATH
+        if not trigger_url.startswith("http://") and not trigger_url.startswith("https://"):
+            trigger_url = f"{API_BRIDGES_BASE_URL.rstrip('/')}/{trigger_url.lstrip('/')}"
 
-    return {
-        "owner": owner,
-        "repo": repo,
-        "workflow": workflow,
-        "ref": ref,
-        "triggered": True,
-        "run_id": latest_run.get("id") or "",
-        "run_url": latest_run.get("html_url") or "",
-        "status": latest_run.get("status") or "triggered",
-        "run_created_at": latest_run.get("created_at") or "",
-        "head_sha": latest_run.get("head_sha") or "",
-        "head_branch": latest_run.get("head_branch") or ref,
-    }
+        async with httpx.AsyncClient(timeout=SITE_BUILD_TRIGGER_TIMEOUT_SECONDS) as client:
+            trigger_resp = await client.post(trigger_url, json=trigger_request, headers={"Content-Type": "application/json"})
+        if trigger_resp.status_code not in (200, 201, 202):
+            raise HTTPException(status_code=trigger_resp.status_code, detail=trigger_resp.text)
+        try:
+            trigger_payload = trigger_resp.json()
+        except json.JSONDecodeError:
+            trigger_payload = {}
+        if not isinstance(trigger_payload, dict):
+            trigger_payload = {}
+
+        return {
+            "owner": owner,
+            "repo": repo,
+            "workflow": workflow,
+            "ref": ref,
+            "provider": provider,
+            "triggered": True,
+            "run_id": trigger_payload.get("run_id") or "",
+            "run_url": trigger_payload.get("run_url") or trigger_payload.get("runUrl") or "",
+            "status": trigger_payload.get("status") or "triggered",
+            "run_created_at": trigger_payload.get("run_created_at") or trigger_payload.get("runCreatedAt") or "",
+            "head_sha": trigger_payload.get("head_sha") or trigger_payload.get("headSha") or "",
+            "head_branch": trigger_payload.get("head_branch") or trigger_payload.get("headBranch") or ref,
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported site build provider '{provider}'. Use github_actions or api_bridges.",
+    )
 
 
 async def find_open_prs_for_ticket(
