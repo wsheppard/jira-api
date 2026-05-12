@@ -123,6 +123,9 @@ function App() {
   const [mergeMessageByPr, setMergeMessageByPr] = useState({});
   const [backfillInProgress, setBackfillInProgress] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState('');
+  const [siteBuildInProgress, setSiteBuildInProgress] = useState(false);
+  const [siteBuildMessage, setSiteBuildMessage] = useState('');
+  const [siteBuildRun, setSiteBuildRun] = useState(null);
   const [ticketQuestionInput, setTicketQuestionInput] = useState('');
   const [ticketQuestionResult, setTicketQuestionResult] = useState(null);
   const [ticketQuestionRunning, setTicketQuestionRunning] = useState(false);
@@ -725,6 +728,28 @@ const [nextPollIn, setNextPollIn] = useState(30);
     }
   }, [activeView, fetchViewData, postJson, stagingResolvedVersion]);
 
+  const handleTriggerSiteBuild = useCallback(async () => {
+    setSiteBuildInProgress(true);
+    setSiteBuildMessage('');
+    setSiteBuildRun(null);
+    const buildRef = githubCompare?.to_ref || 'codex/integration';
+    try {
+      const payload = await postJson(
+        `site-build?owner=palliativa&repo=monorepo&workflow=build-site.yml&ref=${encodeURIComponent(buildRef)}`,
+      );
+      const action = payload?.run_url
+        ? `Queued workflow run: ${payload.run_url}`
+        : 'Build workflow dispatch sent.';
+      setSiteBuildMessage(action);
+      setSiteBuildRun(payload || null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Site build failed to start.';
+      setSiteBuildMessage(`Site build failed: ${message}`);
+    } finally {
+      setSiteBuildInProgress(false);
+    }
+  }, [githubCompare?.to_ref, postJson]);
+
   const handleForceGithubRefresh = useCallback(async () => {
     if (activeView !== STAGING_VIEW_ID) {
       return;
@@ -1222,6 +1247,14 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </button>
                   <button
                     type="button"
+                    className="btn btn-sm btn-outline-success"
+                    onClick={handleTriggerSiteBuild}
+                    disabled={siteBuildInProgress}
+                  >
+                    {siteBuildInProgress ? 'Triggering build...' : 'Trigger Site Build'}
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn-sm btn-outline-primary"
                     onClick={handleForceGithubRefresh}
                     disabled={githubRefreshInProgress}
@@ -1238,6 +1271,16 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </a>
                 </div>
                 {backfillMessage && <div className="small text-muted mb-2">{backfillMessage}</div>}
+                {siteBuildMessage && <div className="small text-muted mb-2">{siteBuildMessage}</div>}
+                {siteBuildRun?.run_url && (
+                  <div className="small text-muted mb-2">
+                    <a href={siteBuildRun.run_url} target="_blank" rel="noopener noreferrer">
+                      Open Workflow Run
+                    </a>
+                    {siteBuildRun.status ? ` (${siteBuildRun.status})` : ''}
+                    {siteBuildRun.head_sha ? ` · ${siteBuildRun.head_sha.slice(0, 7)}` : ''}
+                  </div>
+                )}
                 {!stagingReleaseParent && <div className="text-muted small">No release ticket found for this version.</div>}
                 <div className="small text-muted">
                   Tags in selected hash range: {rangeTags.all.length}

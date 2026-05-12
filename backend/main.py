@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from urllib.parse import quote
 from datetime import date
 from typing import Any, Dict, List, Literal, Tuple
 
@@ -1068,6 +1069,75 @@ async def fetch_pr_commits(
             }
         )
     return commits
+
+
+@app.post("/site-build")
+async def trigger_site_build(
+    owner: str = "palliativa",
+    repo: str = "monorepo",
+    workflow: str = "build-site.yml",
+    ref: str = "codex/integration",
+) -> Dict[str, Any]:
+    """Trigger a monorepo site build workflow and return the latest matching workflow run."""
+    workflow = workflow.strip()
+    if not workflow:
+        raise HTTPException(status_code=400, detail="Workflow must be provided")
+
+    ref = ref.strip() or "codex/integration"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    encoded_workflow = quote(workflow, safe="")
+
+    dispatch_url = (
+        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/dispatches"
+    )
+    compare_url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{encoded_workflow}/runs"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        dispatch_resp = await client.post(dispatch_url, headers=headers, json={"ref": ref})
+    if dispatch_resp.status_code not in (200, 204):
+        raise HTTPException(status_code=dispatch_resp.status_code, detail=dispatch_resp.text)
+
+    latest_run: Dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        runs_resp = await client.get(
+            compare_url,
+            headers=headers,
+            params={"per_page": 5, "event": "workflow_dispatch", "branch": ref},
+        )
+    if runs_resp.status_code != 200:
+        return {
+            "owner": owner,
+            "repo": repo,
+            "workflow": workflow,
+            "ref": ref,
+            "triggered": True,
+            "run_id": "",
+            "run_url": "",
+            "status": "triggered_without_run_metadata",
+        }
+
+    runs_payload = runs_resp.json() or {}
+    candidate_runs = runs_payload.get("workflow_runs") or []
+    if candidate_runs:
+        latest_run = candidate_runs[0]
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "workflow": workflow,
+        "ref": ref,
+        "triggered": True,
+        "run_id": latest_run.get("id") or "",
+        "run_url": latest_run.get("html_url") or "",
+        "status": latest_run.get("status") or "triggered",
+        "run_created_at": latest_run.get("created_at") or "",
+        "head_sha": latest_run.get("head_sha") or "",
+        "head_branch": latest_run.get("head_branch") or ref,
+    }
 
 
 async def find_open_prs_for_ticket(
