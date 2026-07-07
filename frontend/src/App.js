@@ -735,7 +735,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
     const buildRef = githubCompare?.to_ref || 'codex/integration';
     try {
       const payload = await postJson(
-        `site-build?owner=palliativa&repo=monorepo&workflow=build-site.yml&ref=${encodeURIComponent(buildRef)}&provider=api_bridges`,
+        `site-build?owner=palliativa&repo=monorepo&workflow=build-site.yml&ref=${encodeURIComponent(buildRef)}&provider=docker_socket`,
       );
       const action = payload?.run_url
         ? `Build triggered: ${payload.run_url}`

@@ -6,6 +6,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
         curl \
+        docker.io \
         dnsutils \
         git \
         iproute2 \

@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import re
+import shlex
+import shutil
 import time
 import uuid
 from urllib.parse import quote
@@ -92,9 +94,48 @@ if not github_token:
     raise RuntimeError("GITHUB_TOKEN environment variable must be set")
 API_BRIDGES_BASE_URL = "https://api-bridges.ryzen.jjrsoftware.co.uk"
 DIGITALOCEAN_REGISTRY_NAME = "jjr-repo-1"
-SITE_BUILD_PROVIDER = os.getenv("SITE_BUILD_PROVIDER", "api_bridges").strip().lower()
+SITE_BUILD_PROVIDER = os.getenv("SITE_BUILD_PROVIDER", "docker_socket").strip().lower()
 SITE_BUILD_TRIGGER_PATH = os.getenv("SITE_BUILD_TRIGGER_PATH", "").strip()
 SITE_BUILD_TRIGGER_TIMEOUT_SECONDS = int(os.getenv("SITE_BUILD_TRIGGER_TIMEOUT_SECONDS", "30"))
+SITE_BUILD_REPO_URL = os.getenv("SITE_BUILD_REPO_URL", "").strip()
+SITE_BUILD_BUILDER_IMAGE = os.getenv("SITE_BUILD_BUILDER_IMAGE", "node:18-alpine").strip() or "node:18-alpine"
+SITE_BUILD_WEB_CONTAINER = os.getenv("SITE_BUILD_WEB_CONTAINER", "jira-www").strip() or "jira-www"
+SITE_BUILD_WEB_PATH = os.getenv("SITE_BUILD_WEB_PATH", "/usr/share/caddy").strip() or "/usr/share/caddy"
+SITE_BUILD_CONTAINER_WORKDIR = os.getenv("SITE_BUILD_CONTAINER_WORKDIR", "/workspace").strip() or "/workspace"
+SITE_BUILD_CONTAINER_BUILD_SCRIPT_TIMEOUT_SECONDS = int(os.getenv("SITE_BUILD_CONTAINER_BUILD_SCRIPT_TIMEOUT_SECONDS", "1200"))
+SITE_BUILD_DOCKER_COMMAND_TIMEOUT_SECONDS = int(os.getenv("SITE_BUILD_DOCKER_COMMAND_TIMEOUT_SECONDS", "900"))
+SITE_BUILD_BUILD_COMMAND = os.getenv("SITE_BUILD_BUILD_COMMAND", "npm ci && npm run build").strip() or "npm ci && npm run build"
+SITE_BUILD_OUTPUT_DIR = os.getenv("SITE_BUILD_OUTPUT_DIR", "build").strip() or "build"
+
+
+async def _run_docker_command(
+    args: List[str],
+    timeout_seconds: int | None = None,
+) -> tuple[str, str]:
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_seconds or SITE_BUILD_DOCKER_COMMAND_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        raise HTTPException(
+            status_code=504,
+            detail=f"Docker command timed out after {timeout_seconds or SITE_BUILD_DOCKER_COMMAND_TIMEOUT_SECONDS}s: {' '.join(args)}",
+        )
+    if process.returncode != 0:
+        detail = (stderr or b"").decode(errors="replace").strip()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Docker command failed: {' '.join(args)}: {detail or 'non-zero exit code'}",
+        )
+    return (stdout or b"").decode(errors="replace"), (stderr or b"").decode(errors="replace")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai_jql_model = os.getenv("OPENAI_JQL_MODEL", "gpt-4.1-mini")
 xai_api_key = os.getenv("XAI_API_KEY")
@@ -1198,9 +1239,102 @@ async def trigger_site_build(
             "head_branch": trigger_payload.get("head_branch") or trigger_payload.get("headBranch") or ref,
         }
 
+    if provider in {"docker", "docker_socket", "docker-socket", "socket"}:
+        repo_url = SITE_BUILD_REPO_URL.strip()
+        if not repo_url:
+            if not owner:
+                raise HTTPException(status_code=400, detail="owner is required when repository URL is not configured")
+            if not repo:
+                raise HTTPException(status_code=400, detail="repo is required when repository URL is not configured")
+            repo_url = f"https://github.com/{owner}/{repo}.git"
+
+        container_name = f"jira-site-build-{uuid.uuid4().hex}"
+        workdir = SITE_BUILD_CONTAINER_WORKDIR.rstrip("/")
+        repo_dir = f"{workdir}/repo"
+        output_dir = SITE_BUILD_OUTPUT_DIR.strip("/")
+        output_path = f"{repo_dir}/{output_dir}"
+        local_tmp_dir = f"/tmp/{container_name}"
+        container_created = False
+
+        build_script = (
+            "set -euo pipefail\n"
+            "apk add --no-cache git >/dev/null\n"
+            f'git clone "$REPO_URL" "{repo_dir}"\n'
+            f"cd {shlex.quote(repo_dir)}\n"
+            f"git checkout {shlex.quote(ref)}\n"
+            'sh -c "$BUILD_COMMAND"\n'
+            'printf "SITE_BUILD_HEAD_SHA=%s\\n" "$(git rev-parse HEAD)"\n'
+        )
+
+        head_sha = ""
+        run_output = ""
+        try:
+            await _run_docker_command(
+                [
+                    "docker", "create", "--name", container_name,
+                    "-e", f"REPO_URL={repo_url}",
+                    "-e", f"BUILD_COMMAND={SITE_BUILD_BUILD_COMMAND}",
+                    SITE_BUILD_BUILDER_IMAGE,
+                    "sh", "-lc", build_script,
+                ]
+            )
+            container_created = True
+            run_output, _ = await _run_docker_command(
+                ["docker", "start", "-a", container_name],
+                timeout_seconds=SITE_BUILD_CONTAINER_BUILD_SCRIPT_TIMEOUT_SECONDS,
+            )
+
+            for line in run_output.splitlines():
+                line = line.strip()
+                if line.startswith("SITE_BUILD_HEAD_SHA="):
+                    head_sha = line.split("=", 1)[1].strip()
+                    break
+
+            try:
+                os.makedirs(local_tmp_dir, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Unable to create temporary build output path: {exc}",
+                )
+
+            await _run_docker_command(["docker", "cp", f"{container_name}:{output_path}", local_tmp_dir])
+            output_name = output_dir.split("/")[-1]
+            local_output_path = f"{local_tmp_dir}/{output_name}"
+
+            await _run_docker_command(
+                ["docker", "exec", SITE_BUILD_WEB_CONTAINER, "sh", "-lc", f"rm -rf {shlex.quote(SITE_BUILD_WEB_PATH)}/*"]
+            )
+            await _run_docker_command(
+                ["docker", "cp", f"{local_output_path}/.", f"{SITE_BUILD_WEB_CONTAINER}:{SITE_BUILD_WEB_PATH}"]
+            )
+        finally:
+            if container_created:
+                try:
+                    await _run_docker_command(["docker", "rm", "-f", container_name])
+                except HTTPException:
+                    pass
+            if os.path.isdir(local_tmp_dir):
+                shutil.rmtree(local_tmp_dir, ignore_errors=True)
+
+        return {
+            "owner": owner,
+            "repo": repo,
+            "workflow": workflow,
+            "ref": ref,
+            "provider": provider,
+            "triggered": True,
+            "run_id": container_name,
+            "run_url": "",
+            "status": "deployed",
+            "run_created_at": "",
+            "head_sha": head_sha,
+            "head_branch": ref,
+        }
+
     raise HTTPException(
         status_code=400,
-        detail=f"Unsupported site build provider '{provider}'. Use github_actions or api_bridges.",
+        detail=f"Unsupported site build provider '{provider}'. Use github_actions, github, api_bridges, or docker_socket.",
     )
 
 
