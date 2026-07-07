@@ -583,6 +583,87 @@ const [nextPollIn, setNextPollIn] = useState(30);
     };
   };
 
+  const buildReleaseMap = () => {
+    const semverTagPattern = /^v?\d+\.\d+\.\d+$/;
+    const tagRowsAsc = [...rangeTags.all]
+      .reverse()
+      .filter((entry) => entry?.tag);
+    const semverTagsOnPath = tagRowsAsc.filter((entry) => semverTagPattern.test(entry.tag));
+    const otherTagsOnPath = tagRowsAsc.filter((entry) => !semverTagPattern.test(entry.tag));
+    const branchRowsByName = new Map();
+
+    githubPrQueue.forEach((pr) => {
+      const branchName = String(pr?.head_ref || '').trim();
+      if (!branchName) {
+        return;
+      }
+      if (!branchRowsByName.has(branchName)) {
+        branchRowsByName.set(branchName, {
+          name: branchName,
+          prs: [],
+          ticketKeys: new Set(),
+          draftCount: 0,
+          conflictCount: 0,
+          latestUpdatedAt: '',
+        });
+      }
+      const row = branchRowsByName.get(branchName);
+      row.prs.push(pr);
+      if (pr?.draft) {
+        row.draftCount += 1;
+      }
+      if (pr?.has_merge_conflicts) {
+        row.conflictCount += 1;
+      }
+      if (pr?.updated_at && pr.updated_at > row.latestUpdatedAt) {
+        row.latestUpdatedAt = pr.updated_at;
+      }
+      if (Array.isArray(pr?.tickets)) {
+        pr.tickets.forEach((ticket) => {
+          const key = String(ticket?.key || '').trim();
+          if (key) {
+            row.ticketKeys.add(key);
+          }
+        });
+      }
+    });
+
+    const branchRows = Array.from(branchRowsByName.values())
+      .map((row) => ({
+        ...row,
+        ticketKeys: Array.from(row.ticketKeys).sort(),
+      }))
+      .sort((a, b) => {
+        const aBlocked = a.conflictCount > 0 || a.draftCount > 0;
+        const bBlocked = b.conflictCount > 0 || b.draftCount > 0;
+        if (aBlocked !== bBlocked) {
+          return aBlocked ? 1 : -1;
+        }
+        return (b.latestUpdatedAt || '').localeCompare(a.latestUpdatedAt || '');
+      });
+
+    const targetIsReleasedTag = githubCompare?.version_tag_found === true;
+    const targetLabel = targetIsReleasedTag ? 'Selected Release' : 'STAGING';
+    const targetRef = githubCompare?.to_ref || 'codex/integration';
+    const targetSha = githubCompare?.to_sha || '';
+    const prodRef = githubCompare?.latest_repo_tag || githubCompare?.from_ref || '';
+    const prodSha = githubCompare?.from_sha || '';
+
+    return {
+      prodRef,
+      prodSha,
+      targetLabel,
+      targetRef,
+      targetSha,
+      selectedVersion: stagingResolvedVersion || githubCompare?.requested_release_version || '',
+      isUnreleasedVersion: githubCompare?.version_tag_found === false || githubCompare?.version_unreleased_fallback === true,
+      commitCount: githubCompare?.total_commits ?? githubCommits.length,
+      semverTagsOnPath,
+      otherTagsOnPath,
+      branchRows,
+    };
+  };
+
   const buildReleaseReconciliation = () => {
     const resolved = stagingResolvedVersion;
     const releaseMap = new Map();
@@ -870,6 +951,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
   });
   const rangeTags = buildRangeTags();
   const commitTagTimeline = buildCommitTagTimeline();
+  const releaseMap = buildReleaseMap();
   const registryTagMap = new Map();
   (Array.isArray(githubCompare?.registry_tags) ? githubCompare.registry_tags : []).forEach((tag) => {
     const rawTag = typeof tag === 'string' ? tag.trim() : '';
@@ -920,6 +1002,113 @@ const [nextPollIn, setNextPollIn] = useState(30);
   const otherReleaseItems = releaseReconciliation.filter(
     (item) => !item.isReadyForReleaseTicket && !item.isReadyForTestingTicket,
   );
+
+  const renderReleaseMapTag = (entry, keyPrefix) => (
+    <span key={`${keyPrefix}-${entry.tag}`} className="release-map-tag">
+      <span>{entry.tag}</span>
+      {renderBuildStatusBadge(entry.tag, keyPrefix)}
+    </span>
+  );
+
+  const renderReleaseMap = () => {
+    const visibleSemverTags = releaseMap.semverTagsOnPath.slice(0, 6);
+    const visibleOtherTags = releaseMap.otherTagsOnPath.slice(0, 10);
+    const hiddenOtherTagCount = Math.max(releaseMap.otherTagsOnPath.length - visibleOtherTags.length, 0);
+    const visibleBranches = releaseMap.branchRows.slice(0, 8);
+    const hiddenBranchCount = Math.max(releaseMap.branchRows.length - visibleBranches.length, 0);
+
+    return (
+      <div className="release-map-panel mb-3">
+        <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+          <div>
+            <div className="fw-semibold">Release Map</div>
+            <div className="text-muted small">
+              {releaseMap.selectedVersion
+                ? `Selected version: ${releaseMap.selectedVersion}`
+                : 'Selected version resolves from the latest semver tag'}
+            </div>
+          </div>
+          <div className="d-flex flex-wrap gap-2">
+            {releaseMap.isUnreleasedVersion && <span className="badge text-bg-warning">unreleased target</span>}
+            <span className="badge text-bg-light border">{releaseMap.commitCount} commits ahead</span>
+            <span className="badge text-bg-light border">{releaseMap.branchRows.length} open branches</span>
+          </div>
+        </div>
+
+        <div className="release-map-flow">
+          <div className="release-map-node release-map-node-live">
+            <div className="release-map-node-label">PROD / LIVE</div>
+            <div className="release-map-node-ref">{releaseMap.prodRef || 'latest semver tag'}</div>
+            <div className="release-map-node-meta">
+              {releaseMap.prodSha ? releaseMap.prodSha.slice(0, 7) : 'waiting for compare data'}
+            </div>
+          </div>
+
+          <div className="release-map-track" aria-label="Commits between live and target">
+            <div className="release-map-line" aria-hidden="true"></div>
+            <div className="release-map-track-summary">
+              <span>{releaseMap.commitCount} commits</span>
+              <span>{githubCompare?.from_ref || 'base'} -&gt; {githubCompare?.to_ref || 'target'}</span>
+            </div>
+            {(visibleSemverTags.length > 0 || visibleOtherTags.length > 0) && (
+              <div className="release-map-tags">
+                {visibleSemverTags.map((entry) => renderReleaseMapTag(entry, 'release-map-semver'))}
+                {visibleOtherTags.map((entry) => renderReleaseMapTag(entry, 'release-map-other'))}
+                {hiddenOtherTagCount > 0 && (
+                  <span className="release-map-tag release-map-tag-muted">+{hiddenOtherTagCount} tags</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="release-map-node release-map-node-staging">
+            <div className="release-map-node-label">{releaseMap.targetLabel}</div>
+            <div className="release-map-node-ref">{releaseMap.targetRef}</div>
+            <div className="release-map-node-meta">
+              {releaseMap.targetSha ? releaseMap.targetSha.slice(0, 7) : 'waiting for compare data'}
+            </div>
+          </div>
+        </div>
+
+        <div className="release-map-branches">
+          <div className="release-map-branch-title">
+            Incoming PR branches targeting codex/integration
+          </div>
+          {visibleBranches.length > 0 ? (
+            <div className="release-map-branch-grid">
+              {visibleBranches.map((branch) => (
+                <div
+                  key={`release-map-branch-${branch.name}`}
+                  className={`release-map-branch ${branch.conflictCount > 0 ? 'release-map-branch-conflict' : ''}`}
+                >
+                  <div className="release-map-branch-name">{branch.name}</div>
+                  <div className="release-map-branch-meta">
+                    {branch.prs.length} PR{branch.prs.length === 1 ? '' : 's'}
+                    {branch.ticketKeys.length > 0 ? ` • ${branch.ticketKeys.slice(0, 3).join(', ')}` : ''}
+                    {branch.ticketKeys.length > 3 ? ` +${branch.ticketKeys.length - 3}` : ''}
+                  </div>
+                  <div className="d-flex flex-wrap gap-1 mt-2">
+                    {branch.draftCount > 0 && <span className="badge text-bg-secondary">{branch.draftCount} draft</span>}
+                    {branch.conflictCount > 0 && <span className="badge text-bg-danger">{branch.conflictCount} conflict</span>}
+                    {branch.draftCount === 0 && branch.conflictCount === 0 && (
+                      <span className="badge text-bg-success">merge candidate</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {hiddenBranchCount > 0 && (
+                <div className="release-map-branch release-map-branch-more">
+                  +{hiddenBranchCount} more branches
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-muted small">No open PR branches currently target codex/integration.</div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderStagingTicketGrid = (items, emptyMessage, keyPrefix) => (
     <div className="row g-3 mt-1">
@@ -1302,6 +1491,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
                   </div>
                 )}
               </div>
+              {renderReleaseMap()}
               <div className="mb-3">
                 <ul className="nav nav-tabs">
                   <li className="nav-item">
