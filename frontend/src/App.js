@@ -133,7 +133,7 @@ function App() {
   const [ticketAssistantLastText, setTicketAssistantLastText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-const [nextPollIn, setNextPollIn] = useState(30);
+  const [nextPollIn, setNextPollIn] = useState(30);
   const pendingRequests = useRef(0);
   const groupOrderRef = useRef(new Map());
   const hasSyncedInitialPath = useRef(false);
@@ -146,6 +146,7 @@ const [nextPollIn, setNextPollIn] = useState(30);
       ? 0
       : 30000;
   const pollIntervalSeconds = Math.floor(pollIntervalMs / 1000);
+  const isStagingViewLoading = activeConfig?.type === 'githubCommits' && isLoading;
 
   const markRequestStart = useCallback(() => {
     pendingRequests.current += 1;
@@ -274,18 +275,19 @@ const [nextPollIn, setNextPollIn] = useState(30);
         setGithubPrQueue(Array.isArray(data?.prs) ? data.prs : []);
       } else if (config.type === 'githubCommits') {
         const stagingData = await fetchJson(`staging-tickets?project=AP&version=${encodeURIComponent(stagingVersion || 'next')}`);
+        const compareVersion = stagingData?.resolved_version || stagingVersion || 'next';
+        const endpointWithVersion = `${config.endpoint}&version=${encodeURIComponent(compareVersion)}`
+          + `${forceGithubRefresh ? '&force_refresh=1&refresh_nonce=' + Date.now() : ''}`;
+        const data = await fetchJson(endpointWithVersion);
+        const prQueueData = await fetchJson('github-pr-queue?owner=palliativa&repo=monorepo&base=codex/integration');
+
         setStagingTickets(Array.isArray(stagingData?.tickets) ? stagingData.tickets : []);
         setStagingReleaseParent(stagingData?.release_parent ?? null);
         setStagingAvailableVersions(Array.isArray(stagingData?.available_versions) ? stagingData.available_versions : []);
         setStagingResolvedVersion(stagingData?.resolved_version || '');
         setStagingNextVersion(stagingData?.next_version || '');
-        const compareVersion = stagingData?.resolved_version || stagingVersion || 'next';
-        const endpointWithVersion = `${config.endpoint}&version=${encodeURIComponent(compareVersion)}`
-          + `${forceGithubRefresh ? '&force_refresh=1&refresh_nonce=' + Date.now() : ''}`;
-        const data = await fetchJson(endpointWithVersion);
         setGithubCommits(Array.isArray(data?.commits) ? data.commits : []);
         setGithubCompare(data ?? null);
-        const prQueueData = await fetchJson('github-pr-queue?owner=palliativa&repo=monorepo&base=codex/integration');
         setGithubPrQueue(Array.isArray(prQueueData?.prs) ? prQueueData.prs : []);
       } else {
         const data = await fetchJson(config.endpoint);
@@ -1369,6 +1371,15 @@ const [nextPollIn, setNextPollIn] = useState(30);
       {activeConfig?.type === 'githubCommits' ? (
         <div className="card shadow-sm">
           <div className="card-body">
+              {isStagingViewLoading && (
+                <div className="staging-loading-panel" role="status" aria-live="polite">
+                  <div className="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
+                  <div>
+                    <div className="fw-semibold">Loading release data</div>
+                    <div className="small text-muted">Waiting for Jira scope, GitHub commits, tags, and PR queue.</div>
+                  </div>
+                </div>
+              )}
               <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
                 <div>
                   <div className="fw-semibold d-flex align-items-center gap-2">

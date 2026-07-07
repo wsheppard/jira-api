@@ -284,6 +284,18 @@
   line-height: 1.35;
 }
 
+.staging-loading-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid #b6d4fe;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #172554;
+  padding: 0.8rem 0.9rem;
+}
+
 .release-map-panel {
   border: 1px solid #d8dee9;
   border-radius: 8px;
