@@ -279,6 +279,23 @@ a {
   white-space: nowrap;
 }
 
+.pull-request-link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pull-request-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pull-request-link small {
+  flex: 0 0 auto;
+  color: #6a768a;
+  font-weight: 700;
+}
+
 .build-label {
   max-width: 100%;
   overflow: hidden;

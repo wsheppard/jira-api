@@ -20,8 +20,6 @@ const POSITION_CLASSES = {
 };
 
 function TicketRow({ ticket }) {
-  const visiblePullRequests = ticket.pull_requests.filter((pullRequest) => !pullRequest.merged);
-
   return (
     <article className="ticket-row">
       <div className="ticket-identity">
@@ -39,9 +37,16 @@ function TicketRow({ ticket }) {
       </div>
 
       <div className="ticket-links">
-        {visiblePullRequests.map((pullRequest) => (
-          <a key={pullRequest.url} href={pullRequest.url} target="_blank" rel="noreferrer">
-            {pullRequest.title}
+        {ticket.pull_requests.map((pullRequest) => (
+          <a
+            className="pull-request-link"
+            key={pullRequest.url}
+            href={pullRequest.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span>{pullRequest.title}</span>
+            <small>{pullRequest.merged ? 'Merged' : 'Open'}</small>
           </a>
         ))}
         {ticket.delivery_error && <span className="warning-text">{ticket.delivery_error}</span>}
