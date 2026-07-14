@@ -14,10 +14,12 @@ This file contains instructions for the coding agent on how to work within this 
 - From the `backend/` directory run: `uvicorn main:app --reload` (API at http://localhost:8000)
 - Frontend dev: `npm start` inside `frontend/` (CRA on http://localhost:3000)
 
-## Environment Setup
+## Runtime Boundary
 
-- Copy `.env.example` to `.env` and fill in API tokens for Jira and Bitbucket.
-- Install dependencies with `pip install -r requirements.txt`
+- This is a read-only Palliativa delivery map.
+- Jira, GitHub, and deployment data must come through `api-bridges`; this repository must not hold Jira, GitHub, DigitalOcean, or deployment credentials.
+- Production release state comes from stable SemVer Git tags. Shared delivery state comes from `master` and exact Jira-key pull-request evidence.
+- Feature-build provenance comes from Jira's `Feature builds` custom labels field and is related to deployments by exact image-tag equality.
 
 ## Deployment
 
@@ -26,25 +28,18 @@ This file contains instructions for the coding agent on how to work within this 
 - Use the modern Docker Compose CLI with this repo's `compose.yml`.
 - Default command: `docker compose up -d --build`
 
-## Release Flow Purpose (Agent Signpost)
+## Delivery Map Purpose
 
-- This web app is primarily a release-flow control surface.
-- Canonical flow: Jira ticket -> GitHub PR targeting `codex/integration` -> merge into `codex/integration` (staging branch for next release) -> included in release scope.
-- The staging/reconciliation views exist to compare release intent (Jira scope/status/fix version) against delivery reality (open PRs, merged commits, branch reachability).
-- UI actions must reflect real backend preconditions. Do not show an action unless the backend can execute it successfully in the current state.
-- For merge actions, gate on verified open PR state for the ticket and target base branch; do not infer mergeability from "not yet seen in branch" alone.
-- Prefer fail-hard behavior for ambiguous release state (for example multiple matching PRs) with explicit operator feedback, not silent fallback behavior.
+- Show the stable production release, current `master`, and current Jira tickets as one compact stack.
+- Show exact pull-request, feature-build, and deployment evidence without exposing raw hashes, digests, or opaque IDs in the primary UI.
+- Keep this site observational. Pull-request merge, release creation, builds, deployments, and Jira mutation belong to their established owning workflows.
 
 ## Semantic Index (feature → code map)
 
-- Backend API: `backend/main.py` – FastAPI app exposing Jira views (`/open-issues-by-due`, `/in-progress`, `/backlog`, `/manager-meeting`, `/recently-updated` with latest comment extraction) plus Bitbucket utilities (`/bitbucket-test`, `/bitbucket-commits`, `/bitbucket-repos`) and pipeline/deployment data (`/pipeline-dashboard`, `/deployments`).
-- Bitbucket pipeline aggregator: `backend/pipeline_dashboard.py` – wraps `BitbucketClient` to fetch pipelines per repo/tag pattern and shape data for the pipeline dashboard.
-- Jira/Bitbucket client: `backend/bbclient.py` – Bitbucket REST helper and pipeline iterator used by the pipeline dashboard.
+- Backend API: `backend/main.py` – FastAPI aggregation of typed `api-bridges` read contracts at `/delivery-stack`.
 - Frontend entry: `frontend/src/index.js` – mounts `<App />`, loads Bootstrap CSS/JS.
-- Frontend shell: `frontend/src/App.js` – SPA controller with view selector, polling (30s), URL syncing (`/` or `/view/{id}`), error/loading state, and routing between tickets and pipeline data.
-- Tickets UI: `frontend/src/TicketsList.js` – card grid with overdue wiggle animation, priority borders, labels, assignee avatar, and time-ago metadata.
-- Pipeline UI: `frontend/src/PipelineDashboard.js` – per-environment summary of latest successful frontend/backend runs plus detailed tables with result badges, links, and manual-step callouts.
-- Frontend styles: `frontend/src/App.css` – grid layout, wiggle animation for stale tickets, priority color stripes, and pipeline ref badge styling.
+- Frontend shell: `frontend/src/App.js` – compact read-only production → master → ticket delivery stack.
+- Frontend styles: `frontend/src/App.css` – wide reusable ticket rows and responsive release/deployment summary components.
 
 ## Gemini Notes (Jira API)
 
