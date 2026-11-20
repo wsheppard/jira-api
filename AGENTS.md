@@ -1,5 +1,7 @@
 # AGENTS.md
 
+- For any UI work, load the `gui-design` skill and check the rendered result against it before accepting the change.
+
 This file contains instructions for the coding agent on how to work within this codebase.
 
 ## Coding Conventions
